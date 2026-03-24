@@ -1,70 +1,110 @@
-# Getting Started with Create React App
+# Stellar Void Runner
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A fast-paced 3D space shooter game built with React and Three.js. Navigate your spacecraft through increasingly dangerous cosmic environments, battle bosses, and survive as long as possible.
 
-## Available Scripts
+## Features
 
-In the project directory, you can run:
+- **7 Unique Levels** - Each with distinct visual themes, enemy compositions, and difficulty scaling
+- **Boss Battles** - Face off against powerful bosses with multiple attack patterns and phases
+- **12 Power-ups** - Shields, weapons, speed boosts, ghost mode, homing missiles, and more
+- **Responsive Controls** - Keyboard, mouse, and touch support
+- **Procedural Audio** - Dynamic sound effects generated with Web Audio API
+- **Optimized Performance** - Instanced rendering for smooth 60 FPS gameplay
 
-### `npm start`
+## Controls
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+| Input | Action |
+|-------|--------|
+| `W` / `A` / `S` / `D` | Navigate spacecraft |
+| `Arrow Keys` | Alternative navigation |
+| `Space` / `Left Click` | Fire weapons |
+| `Shift` | Speed boost |
+| `Escape` / `P` | Pause game |
+| Touch swipe | Navigate (mobile) |
+| Touch tap | Fire (mobile) |
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+## Levels
 
-### `npm test`
+1. **Asteroid Belt** - The Outer Rim
+2. **Nebula Storm** - Crimson Veil (Boss: Drone Commander)
+3. **Frozen Expanse** - Ice Giants Territory
+4. **Solar Flare** - Corona Zone (Boss: Solar Sentinel)
+5. **Dark Matter Rift** - The Void Between
+6. **Enemy Armada** - Battle Station Omega (Boss: Mothership)
+7. **Quantum Realm** - Beyond Reality (Final Boss: Quantum Overlord)
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Power-ups
 
-### `npm run build`
+| Power-up | Effect |
+|----------|--------|
+| Shield | Absorbs damage |
+| Health | Restores hull integrity |
+| Speed Boost | Temporary speed increase |
+| Slow Motion | Slows time for precision dodging |
+| Weapon Upgrade | Enhanced firepower |
+| Score Multiplier | Increased point gain |
+| Magnet | Attracts nearby power-ups |
+| Nuke | Destroys all enemies on screen |
+| Laser Beam | Continuous frontal laser |
+| Ghost Mode | Invulnerability |
+| Homing Missiles | Auto-targeting projectiles |
+| Size Reduction | Smaller hitbox |
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+## Getting Started
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### Prerequisites
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+- Node.js 16+ 
+- npm or yarn
 
-### `npm run eject`
+### Installation
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+```bash
+# Clone the repository
+git clone <repository-url>
+cd Hackathon_IAT_Fusion
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+# Install dependencies
+npm install
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+# Start development server
+npm start
+```
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+Open [http://localhost:3000](http://localhost:3000) to play.
 
-## Learn More
+### Build for Production
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+```bash
+npm run build
+```
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+The optimized build will be in the `build` folder.
 
-### Code Splitting
+## Tech Stack
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+- **React 18** - UI framework
+- **Three.js** - 3D rendering
+- **React Three Fiber** - React renderer for Three.js
+- **TypeScript** - Type safety
+- **Web Audio API** - Procedural sound generation
 
-### Analyzing the Bundle Size
+## Project Structure
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+```
+src/
+├── App.tsx           # Main app component & UI
+├── App.css           # Styling
+├── index.tsx         # Entry point
+└── game/
+    ├── GameEngine.ts    # Core game logic
+    ├── SpaceGame.tsx    # 3D rendering
+    ├── InputManager.ts  # Input handling
+    ├── AudioManager.ts  # Sound system
+    ├── levels.ts        # Level configurations
+    └── types.ts         # TypeScript interfaces
+```
 
-### Making a Progressive Web App
+## License
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+MIT
