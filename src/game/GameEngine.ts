@@ -12,6 +12,8 @@ import {
   LANE_COUNT,
   PLAY_AREA_WIDTH,
   PLAY_AREA_HEIGHT,
+  GhostFrame,
+  GhostRun,
 } from './types';
 import { inputManager } from './InputManager';
 import { audioManager } from './AudioManager';
@@ -104,10 +106,16 @@ export class GameEngine {
   private shootCooldown = 0;
   private currentLevelConfig: LevelConfig = LEVELS[0];
   
+  // Ghost replay system
+  private ghostFrames: GhostFrame[] = [];
+  private ghostRun: GhostRun | null = null;
+  private ghostFrameIndex = 0;
+  private recordingInterval = 3; // Record every N frames
+  
   private callbacks: {
     onScoreUpdate?: (score: number) => void;
     onHealthUpdate?: (health: number, shield: number) => void;
-    onGameOver?: (score: number, distance: number) => void;
+    onGameOver?: (score: number, distance: number, completedGame: boolean) => void;
     onPowerUp?: (type: PowerUpType) => void;
     onDistanceUpdate?: (distance: number) => void;
     onMultiplierUpdate?: (multiplier: number) => void;
@@ -116,11 +124,13 @@ export class GameEngine {
     onLevelProgress?: (progress: number) => void;
     onBossSpawn?: (bossName: string) => void;
     onBossDefeat?: (bossName: string, points: number) => void;
+    onGhostUpdate?: (ghostPosition: { x: number; y: number; rotationZ: number } | null) => void;
   } = {};
 
   constructor(config: Partial<GameConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.state = createInitialState();
+    this.loadGhostRun();
   }
 
   init() {
@@ -144,11 +154,87 @@ export class GameEngine {
   reset() {
     this.state = createInitialState();
     this.shootCooldown = 0;
+    this.ghostFrames = [];
+    this.ghostFrameIndex = 0;
+    this.currentLevelConfig = LEVELS[0];
     this.callbacks.onScoreUpdate?.(0);
     this.callbacks.onHealthUpdate?.(100, 0);
     this.callbacks.onDistanceUpdate?.(0);
     this.callbacks.onMultiplierUpdate?.(1);
     this.callbacks.onSpeedUpdate?.(this.state.gameSpeed);
+  }
+
+  private loadGhostRun() {
+    try {
+      const saved = localStorage.getItem('spaceGame_ghostRun');
+      if (saved) {
+        this.ghostRun = JSON.parse(saved);
+      }
+    } catch {
+      this.ghostRun = null;
+    }
+  }
+
+  private saveGhostRun(completedGame: boolean) {
+    const newRun: GhostRun = {
+      frames: this.ghostFrames,
+      finalDistance: this.state.distance,
+      finalScore: this.state.score,
+      completedGame,
+      date: new Date().toISOString(),
+    };
+
+    // Save if better distance or first completed run
+    if (!this.ghostRun || 
+        this.state.distance > this.ghostRun.finalDistance ||
+        (completedGame && !this.ghostRun.completedGame)) {
+      this.ghostRun = newRun;
+      localStorage.setItem('spaceGame_ghostRun', JSON.stringify(newRun));
+    }
+  }
+
+  private recordGhostFrame() {
+    if (this.state.frameCount % this.recordingInterval !== 0) return;
+    
+    this.ghostFrames.push({
+      x: this.state.player.position.x,
+      y: this.state.player.position.y,
+      rotationZ: this.state.player.rotation.z,
+      distance: this.state.distance,
+    });
+  }
+
+  private updateGhostPlayback() {
+    if (!this.ghostRun || this.ghostRun.frames.length === 0) {
+      this.callbacks.onGhostUpdate?.(null);
+      return;
+    }
+
+    // Find the ghost frame that matches current distance
+    while (this.ghostFrameIndex < this.ghostRun.frames.length - 1 &&
+           this.ghostRun.frames[this.ghostFrameIndex + 1].distance <= this.state.distance) {
+      this.ghostFrameIndex++;
+    }
+
+    const frame = this.ghostRun.frames[this.ghostFrameIndex];
+    if (frame && this.ghostFrameIndex < this.ghostRun.frames.length) {
+      this.callbacks.onGhostUpdate?.({
+        x: frame.x,
+        y: frame.y,
+        rotationZ: frame.rotationZ,
+      });
+    } else {
+      this.callbacks.onGhostUpdate?.(null);
+    }
+  }
+
+  getGhostRun(): GhostRun | null {
+    return this.ghostRun;
+  }
+
+  clearGhostRun() {
+    this.ghostRun = null;
+    localStorage.removeItem('spaceGame_ghostRun');
   }
 
   setCallbacks(callbacks: typeof this.callbacks) {
@@ -869,42 +955,59 @@ export class GameEngine {
   private defeatBoss() {
     const { boss } = this.state;
     if (!boss) return;
-    
+
     // Big explosion
     for (let i = 0; i < 5; i++) {
       const offsetX = (Math.random() - 0.5) * boss.size * 2;
       const offsetY = (Math.random() - 0.5) * boss.size * 2;
       this.addExplosion(
-        boss.position.x + offsetX, 
-        boss.position.y + offsetY, 
-        boss.position.z, 
-        2 + Math.random(), 
+        boss.position.x + offsetX,
+        boss.position.y + offsetY,
+        boss.position.z,
+        2 + Math.random(),
         boss.color
       );
     }
-    
+
     // Award points
     const bossPoints = boss.maxHealth * 10 * this.state.multiplier;
     this.state.score += bossPoints;
-    
+
+    // Check if this was the final boss (Quantum Overlord)
+    const isFinalBoss = boss.id === 'quantum_overlord';
+
     // Clear boss
     this.state.boss = null;
     this.state.bossActive = false;
-    
+
     // Bonus health and shield
     this.state.player.health = Math.min(this.state.player.maxHealth, this.state.player.health + 30);
     this.state.player.shield = Math.min(this.state.player.maxShield, this.state.player.shield + 20);
     this.callbacks.onHealthUpdate?.(this.state.player.health, this.state.player.shield);
-    
+
     this.callbacks.onBossDefeat?.(boss.name, bossPoints);
     audioManager.play('explosion');
+
+    // Game completed!
+    if (isFinalBoss) {
+      setTimeout(() => {
+        this.gameOver(true);
+      }, 2000);
+    }
   }
 
-  private gameOver() {
+  private gameOver(completedGame: boolean = false) {
     this.state.isGameOver = true;
     audioManager.stopEngine();
-    audioManager.play('game_over');
-    this.callbacks.onGameOver?.(this.state.score, Math.floor(this.state.distance));
+    
+    if (completedGame) {
+      audioManager.play('powerup'); // Victory sound
+    } else {
+      audioManager.play('game_over');
+    }
+    
+    this.saveGhostRun(completedGame);
+    this.callbacks.onGameOver?.(this.state.score, Math.floor(this.state.distance), completedGame);
   }
 
   update() {
@@ -915,6 +1018,10 @@ export class GameEngine {
     const timeScale = activeEffects.slowMotion ? 0.5 : 1;
 
     this.state.frameCount++;
+    
+    // Ghost system
+    this.recordGhostFrame();
+    this.updateGhostPlayback();
 
     if (input.left) this.movePlayerLane(-1);
     if (input.right) this.movePlayerLane(1);

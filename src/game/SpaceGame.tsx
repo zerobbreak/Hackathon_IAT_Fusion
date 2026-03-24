@@ -766,7 +766,7 @@ function BossEnemy({ state }: { state: GameState }) {
   );
 }
 
-function Scene({ engine }: { engine: GameEngine }) {
+function SceneWithGhost({ engine, ghostPosition }: { engine: GameEngine; ghostPosition: GhostPosition | null }) {
   const state = engine.getState();
   const levelConfig = engine.getCurrentLevelConfig();
 
@@ -797,6 +797,7 @@ function Scene({ engine }: { engine: GameEngine }) {
       <Planets />
       <GridTunnel gameSpeed={state.gameSpeed} levelConfig={levelConfig} />
 
+      {ghostPosition && <GhostShip position={ghostPosition} />}
       <PlayerShip state={state} />
       <InstancedObstacles state={state} />
       <InstancedProjectiles state={state} />
@@ -809,10 +810,47 @@ function Scene({ engine }: { engine: GameEngine }) {
   );
 }
 
+interface GhostPosition {
+  x: number;
+  y: number;
+  rotationZ: number;
+}
+
+function GhostShip({ position }: { position: GhostPosition }) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  useFrame(() => {
+    if (groupRef.current) {
+      groupRef.current.position.x = position.x;
+      groupRef.current.position.y = position.y;
+      groupRef.current.rotation.z = position.rotationZ;
+    }
+  });
+
+  return (
+    <group ref={groupRef} position={[position.x, position.y, 0]}>
+      {/* Ghost ship - simplified translucent version */}
+      <mesh>
+        <coneGeometry args={[0.4, 1.5, 8]} />
+        <meshBasicMaterial color="#00ffff" transparent opacity={0.3} wireframe />
+      </mesh>
+      <mesh position={[0, 0.2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.25, 0.4, 1.2, 8]} />
+        <meshBasicMaterial color="#00ffff" transparent opacity={0.25} wireframe />
+      </mesh>
+      {/* Trail effect */}
+      <mesh position={[0, 0, 0.8]}>
+        <sphereGeometry args={[0.2, 8, 8]} />
+        <meshBasicMaterial color="#00ffff" transparent opacity={0.4} />
+      </mesh>
+    </group>
+  );
+}
+
 interface SpaceGameProps {
   onScoreUpdate?: (score: number) => void;
   onHealthUpdate?: (health: number, shield: number) => void;
-  onGameOver?: (score: number, distance: number) => void;
+  onGameOver?: (score: number, distance: number, completedGame: boolean) => void;
   onDistanceUpdate?: (distance: number) => void;
   onMultiplierUpdate?: (multiplier: number) => void;
   onSpeedUpdate?: (speed: number) => void;
@@ -821,6 +859,7 @@ interface SpaceGameProps {
   onLevelProgress?: (progress: number) => void;
   onBossSpawn?: (bossName: string) => void;
   onBossDefeat?: (bossName: string, points: number) => void;
+  onGhostUpdate?: (ghostPosition: GhostPosition | null) => void;
   running: boolean;
 }
 
@@ -836,10 +875,12 @@ export default function SpaceGame({
   onLevelProgress,
   onBossSpawn,
   onBossDefeat,
+  onGhostUpdate,
   running,
 }: SpaceGameProps) {
   const engineRef = useRef<GameEngine | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const [ghostPosition, setGhostPosition] = useState<GhostPosition | null>(null);
 
   useEffect(() => {
     engineRef.current = new GameEngine();
@@ -865,9 +906,13 @@ export default function SpaceGame({
         onLevelProgress,
         onBossSpawn,
         onBossDefeat,
+        onGhostUpdate: (pos) => {
+          setGhostPosition(pos);
+          onGhostUpdate?.(pos);
+        },
       });
     }
-  }, [onScoreUpdate, onHealthUpdate, onGameOver, onDistanceUpdate, onMultiplierUpdate, onSpeedUpdate, onPowerUp, onLevelChange, onLevelProgress, onBossSpawn, onBossDefeat]);
+  }, [onScoreUpdate, onHealthUpdate, onGameOver, onDistanceUpdate, onMultiplierUpdate, onSpeedUpdate, onPowerUp, onLevelChange, onLevelProgress, onBossSpawn, onBossDefeat, onGhostUpdate]);
 
   useEffect(() => {
     if (running && engineRef.current) {
@@ -904,7 +949,7 @@ export default function SpaceGame({
           precision: 'mediump',
         }}
       >
-        <Scene engine={engineRef.current} />
+        <SceneWithGhost engine={engineRef.current} ghostPosition={ghostPosition} />
       </Canvas>
     </div>
   );

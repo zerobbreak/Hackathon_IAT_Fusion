@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import SpaceGame from './game/SpaceGame';
 import './App.css';
 
-type Screen = 'title' | 'playing' | 'paused' | 'gameover';
+type Screen = 'title' | 'playing' | 'paused' | 'gameover' | 'powerups' | 'victory';
 type PowerUpType = 
   | 'shield' 
   | 'health' 
@@ -47,6 +47,28 @@ const POWER_UP_COLORS: Record<PowerUpType, string> = {
   size_reduction: '#88ff88',
 };
 
+const POWER_UP_DESCRIPTIONS: Record<PowerUpType, string> = {
+  shield: 'Generates a protective energy barrier that absorbs incoming damage before affecting your hull.',
+  health: 'Repairs your spacecraft hull, restoring lost hit points to keep you in the fight.',
+  speed_boost: 'Activates afterburners for a temporary speed increase. Great for escaping danger.',
+  slow_motion: 'Dilates time around your ship, slowing enemies and projectiles for precision dodging.',
+  weapon_upgrade: 'Overcharges your weapons, increasing fire rate and enabling triple-shot mode.',
+  score_multiplier: 'Doubles your score gain for a limited time. Stack with combos for massive points.',
+  magnet: 'Creates a magnetic field that attracts nearby power-ups toward your ship.',
+  nuke: 'Devastating nuclear blast that destroys all enemies on screen. Use wisely.',
+  laser_beam: 'Fires a continuous high-powered laser that damages everything in its path.',
+  ghost_mode: 'Phase shifts your ship into another dimension, making you invulnerable to all damage.',
+  homing_missiles: 'Launches auto-targeting missiles that seek out and destroy nearby enemies.',
+  size_reduction: 'Shrinks your ship to nano-size, making your hitbox much smaller and harder to hit.',
+};
+
+interface GhostRunInfo {
+  finalDistance: number;
+  finalScore: number;
+  completedGame: boolean;
+  date: string;
+}
+
 interface LevelInfo {
   id: number;
   name: string;
@@ -73,6 +95,22 @@ export default function App() {
   const [levelTransition, setLevelTransition] = useState(false);
   const [bossAlert, setBossAlert] = useState<string | null>(null);
   const [bossDefeated, setBossDefeated] = useState<{ name: string; points: number } | null>(null);
+  const [, setGameCompleted] = useState(false);
+  const [ghostInfo, setGhostInfo] = useState<GhostRunInfo | null>(() => {
+    try {
+      const saved = localStorage.getItem('spaceGame_ghostRun');
+      if (saved) {
+        const data = JSON.parse(saved);
+        return {
+          finalDistance: data.finalDistance,
+          finalScore: data.finalScore,
+          completedGame: data.completedGame,
+          date: data.date,
+        };
+      }
+    } catch { /* ignore */ }
+    return null;
+  });
 
   const handleStart = useCallback(() => {
     setScore(0);
@@ -81,18 +119,34 @@ export default function App() {
     setShield(0);
     setMultiplier(1);
     setSpeed(6);
+    setGameCompleted(false);
     setCurrentLevel({ id: 1, name: 'ASTEROID BELT', subtitle: 'The Outer Rim', progress: 0 });
     setScreen('playing');
   }, []);
 
-  const handleGameOver = useCallback((finalScore: number, finalDist: number) => {
+  const handleGameOver = useCallback((finalScore: number, finalDist: number, completedGame: boolean = false) => {
     setFinalScore(finalScore);
     setFinalDistance(finalDist);
+    setGameCompleted(completedGame);
+    
+    // Update ghost info
+    try {
+      const saved = localStorage.getItem('spaceGame_ghostRun');
+      if (saved) {
+        const data = JSON.parse(saved);
+        setGhostInfo({
+          finalDistance: data.finalDistance,
+          finalScore: data.finalScore,
+          completedGame: data.completedGame,
+          date: data.date,
+        });
+      }
+    } catch { /* ignore */ }
     if (finalScore > highScore) {
       setHighScore(finalScore);
       localStorage.setItem('spaceGame_highScore', finalScore.toString());
     }
-    setScreen('gameover');
+    setScreen(completedGame ? 'victory' : 'gameover');
   }, [highScore]);
 
   const handleHealthUpdate = useCallback((newHealth: number, newShield: number) => {
@@ -168,9 +222,27 @@ export default function App() {
               </div>
             )}
 
+            {ghostInfo && (
+              <div className="ghost-info-panel">
+                <div className="ghost-header">
+                  <span className="ghost-icon">👻</span>
+                  <span className="ghost-title">SHADOW RUN</span>
+                </div>
+                <div className="ghost-stats">
+                  <span>Best Distance: {Math.floor(ghostInfo.finalDistance)}m</span>
+                  {ghostInfo.completedGame && <span className="ghost-completed">GAME COMPLETED!</span>}
+                </div>
+                <div className="ghost-hint">Race against your best run</div>
+              </div>
+            )}
+
             <button className="cta-btn" onClick={handleStart}>
               <span className="btn-text">LAUNCH</span>
               <span className="btn-glow" />
+            </button>
+            
+            <button className="secondary-btn powerups-btn" onClick={() => setScreen('powerups')}>
+              POWER-UPS GUIDE
             </button>
 
             <div className="controls-panel">
@@ -207,6 +279,33 @@ export default function App() {
               <div className="mobile-hint">
                 <span>Touch: Tap to shoot, Swipe to move</span>
               </div>
+            </div>
+          </div>
+        )}
+
+        {screen === 'powerups' && (
+          <div className="overlay-screen powerups-screen">
+            <div className="powerups-content">
+              <h2 className="powerups-title">POWER-UPS GUIDE</h2>
+              <p className="powerups-subtitle">Collect these to gain tactical advantages</p>
+              
+              <div className="powerups-grid">
+                {(Object.keys(POWER_UP_NAMES) as PowerUpType[]).map((type) => (
+                  <div key={type} className="powerup-card" style={{ borderColor: POWER_UP_COLORS[type] }}>
+                    <div className="powerup-header">
+                      <div className="powerup-icon" style={{ backgroundColor: POWER_UP_COLORS[type] }} />
+                      <span className="powerup-name" style={{ color: POWER_UP_COLORS[type] }}>
+                        {POWER_UP_NAMES[type]}
+                      </span>
+                    </div>
+                    <p className="powerup-description">{POWER_UP_DESCRIPTIONS[type]}</p>
+                  </div>
+                ))}
+              </div>
+
+              <button className="cta-btn" onClick={() => setScreen('title')}>
+                <span className="btn-text">BACK</span>
+              </button>
             </div>
           </div>
         )}
@@ -258,12 +357,63 @@ export default function App() {
                 </div>
               </div>
 
+              {ghostInfo && finalDistance < ghostInfo.finalDistance && (
+                <div className="ghost-comparison">
+                  <span>Shadow was {Math.floor(ghostInfo.finalDistance - finalDistance)}m ahead</span>
+                </div>
+              )}
+
               {finalScore >= highScore && finalScore > 0 && (
                 <div className="new-record">NEW RECORD!</div>
               )}
 
               <button className="cta-btn" onClick={handleStart}>
                 <span className="btn-text">TRY AGAIN</span>
+              </button>
+              <button className="secondary-btn" onClick={() => setScreen('title')}>
+                MAIN MENU
+              </button>
+            </div>
+          </div>
+        )}
+
+        {screen === 'victory' && (
+          <div className="overlay-screen victory-screen">
+            <div className="victory-content">
+              <div className="victory-stars">★ ★ ★</div>
+              <h2 className="victory-title">MISSION COMPLETE</h2>
+              <p className="victory-subtitle">You have conquered the Quantum Realm!</p>
+              
+              <div className="victory-stats">
+                <div className="victory-stat primary">
+                  <span className="victory-label">FINAL SCORE</span>
+                  <span className="victory-value">{finalScore.toLocaleString()}</span>
+                </div>
+                <div className="victory-stat">
+                  <span className="victory-label">TOTAL DISTANCE</span>
+                  <span className="victory-value">{finalDistance}m</span>
+                </div>
+                <div className="victory-stat">
+                  <span className="victory-label">LEVELS CLEARED</span>
+                  <span className="victory-value">7 / 7</span>
+                </div>
+                <div className="victory-stat">
+                  <span className="victory-label">BOSSES DEFEATED</span>
+                  <span className="victory-value">4 / 4</span>
+                </div>
+              </div>
+
+              <div className="victory-badge">
+                <span className="badge-icon">🏆</span>
+                <span className="badge-text">VOID CHAMPION</span>
+              </div>
+
+              {finalScore >= highScore && finalScore > 0 && (
+                <div className="new-record victory-record">NEW HIGH SCORE!</div>
+              )}
+
+              <button className="cta-btn" onClick={handleStart}>
+                <span className="btn-text">PLAY AGAIN</span>
               </button>
               <button className="secondary-btn" onClick={() => setScreen('title')}>
                 MAIN MENU

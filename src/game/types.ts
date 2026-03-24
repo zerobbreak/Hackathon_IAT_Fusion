@@ -4,6 +4,22 @@ export interface Vector3 {
   z: number;
 }
 
+// Ghost/Shadow replay system
+export interface GhostFrame {
+  x: number;
+  y: number;
+  rotationZ: number;
+  distance: number;
+}
+
+export interface GhostRun {
+  frames: GhostFrame[];
+  finalDistance: number;
+  finalScore: number;
+  completedGame: boolean;
+  date: string;
+}
+
 export interface GameEntity {
   id: string;
   position: Vector3;
