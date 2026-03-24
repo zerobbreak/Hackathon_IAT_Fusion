@@ -1,10 +1,16 @@
-import { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import * as THREE from 'three';
+import Game2D from './Game2D';
 
-const LANES = 3;
-const LH = 100;
-const LC = [50, 150, 250];
-const PX = 80;
+const LANES = [-3, 0, 3];
 const MAX_AMMO = 6;
+const MAX_OBSTACLES = 30;
+const MAX_BULLETS = 20;
+const MAX_ENEMY_BULLETS = 30;
+const MAX_SHARDS = 15;
+const MAX_PARTICLES = 50;
+const MAX_EXPLOSIONS = 8;
 
 const SIGNALS = [
   'INTERCEPT: "Armed drones deployed on Grid-7. Courier is priority target."',
@@ -27,66 +33,455 @@ interface GameProps {
   running: boolean;
 }
 
-export default function Game({ onScoreUpdate, onSignal, onGameOver, onAmmoUpdate, onLivesUpdate, onMultUpdate, onDistUpdate, running }: GameProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const stateRef = useRef<any>({});
-  const keysRef = useRef<Record<string, boolean>>({});
-  const animRef = useRef(null);
+function RendererBooting() {
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'grid',
+        placeItems: 'center',
+        color: '#b8b4cc',
+        fontSize: '0.9rem',
+        textAlign: 'center',
+        padding: '1rem',
+      }}
+    >
+      Initializing renderer...
+    </div>
+  );
+}
 
-  const reset = useCallback(() => {
-    stateRef.current = {
-      player: { lane: 1, y: LC[1], targetY: LC[1], flashTimer: 0 },
-      obstacles: [], shards: [], bullets: [], enemyBullets: [],
-      particles: [], explosions: [], floatTexts: [],
-      score: 0, dist: 0, mult: 1, multTimer: 0,
-      lives: 3, ammo: MAX_AMMO, reloadTimer: 0,
-      speed: 4, frameCount: 0, spawnTimer: 0,
-      signalTimer: 0, signalIdx: 0,
-    };
-  }, []);
+type GameCanvasErrorBoundaryProps = {
+  children: React.ReactNode;
+  fallback: React.ReactNode;
+  onError?: () => void;
+};
 
-  const spawnExplosion = (s: any, x: number, y: number, type: string) => {
-    const colors = type === 'turret'
-      ? ['#E24B4A', '#EF9F27', '#F5C4B3', '#BA7517']
-      : ['#D85A30', '#EF9F27', '#F0997B', '#993C1D'];
-    const numShards = type === 'turret' ? 14 : 9;
-    const shards = Array.from({ length: numShards }, (_, i) => {
-      const angle = (i / numShards) * Math.PI * 2 + Math.random() * 0.4;
-      const spd = (type === 'turret' ? 3.5 : 2.5) + Math.random() * 3;
-      return {
-        x, y,
-        vx: Math.cos(angle) * spd,
-        vy: Math.sin(angle) * spd,
-        size: (type === 'turret' ? 5 : 3.5) + Math.random() * 3,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        life: 1, rot: Math.random() * Math.PI * 2,
-        rotSpeed: (Math.random() - 0.5) * 0.3,
-      };
-    });
-    const numRings = type === 'turret' ? 3 : 2;
-    const rings = Array.from({ length: numRings }, (_, i) => ({
-      x, y, r: 4 + i * 6,
-      maxR: (type === 'turret' ? 55 : 38) + i * 10,
-      life: 1, color: colors[0],
-    }));
-    s.explosions.push({ shards, rings, life: 1 });
-  };
+type GameCanvasErrorBoundaryState = {
+  hasError: boolean;
+};
 
-  const addParticles = (s: any, x: number, y: number, color: string, n: number) => {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const spd = 1.5 + Math.random() * 3.5;
-      s.particles.push({ x, y, vx: Math.cos(a) * spd, vy: Math.sin(a) * spd, life: 1, color });
+class GameCanvasErrorBoundary extends React.Component<GameCanvasErrorBoundaryProps, GameCanvasErrorBoundaryState> {
+  state: GameCanvasErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): GameCanvasErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('WebGL canvas failed to initialize:', error);
+    this.props.onError?.();
+  }
+
+  render() {
+    if (this.state.hasError) return this.props.fallback;
+    return this.props.children;
+  }
+}
+
+function supportsWebGL(): boolean {
+  if (typeof window === 'undefined') return false;
+  const canvas = document.createElement('canvas');
+  try {
+    return Boolean(
+      canvas.getContext('webgl2') ||
+      canvas.getContext('webgl') ||
+      canvas.getContext('experimental-webgl')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function GridTunnel({ stateRef }: { stateRef: React.MutableRefObject<any> }) {
+  const gridRef = useRef<THREE.GridHelper>(null);
+  
+  useFrame(() => {
+    if (gridRef.current && stateRef.current) {
+      gridRef.current.position.z = (stateRef.current.frameCount * stateRef.current.speed * 0.05) % 10;
     }
-  };
+  });
+
+  return (
+    <group position={[0, -1, 0]}>
+      <gridHelper ref={gridRef} args={[100, 100, 0x534AB7, 0x534AB7]} position={[0, 0, -40]} />
+    </group>
+  );
+}
+
+function InstancedObstacles({ stateRef }: { stateRef: React.MutableRefObject<any> }) {
+  const droneRef = useRef<THREE.InstancedMesh>(null);
+  const turretRef = useRef<THREE.InstancedMesh>(null);
+  const blockerRef = useRef<THREE.InstancedMesh>(null);
+  
+  const tempMatrix = useMemo(() => new THREE.Matrix4(), []);
+  const tempColor = useMemo(() => new THREE.Color(), []);
+
+  const droneMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#D85A30' }), []);
+  const turretMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#E24B4A' }), []);
+  const blockerMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#333344', roughness: 0.9 }), []);
+
+  useFrame(() => {
+    const s = stateRef.current;
+    if (!s) return;
+
+    let droneIdx = 0;
+    let turretIdx = 0;
+    let blockerIdx = 0;
+
+    s.obstacles.forEach((o: any) => {
+      if (o.hp <= 0) return;
+      
+      tempMatrix.makeTranslation(o.x, o.y, o.z);
+      
+      if (o.type === 'drone' && droneRef.current && droneIdx < MAX_OBSTACLES) {
+        droneRef.current.setMatrixAt(droneIdx, tempMatrix);
+        tempColor.set(o.hitFlash > 0 ? '#ffaa88' : '#D85A30');
+        droneRef.current.setColorAt(droneIdx, tempColor);
+        droneIdx++;
+      } else if (o.type === 'turret' && turretRef.current && turretIdx < MAX_OBSTACLES) {
+        tempMatrix.makeTranslation(o.x, o.y + 0.5, o.z);
+        turretRef.current.setMatrixAt(turretIdx, tempMatrix);
+        tempColor.set(o.hitFlash > 0 ? '#ffaa66' : '#E24B4A');
+        turretRef.current.setColorAt(turretIdx, tempColor);
+        turretIdx++;
+      } else if (o.type === 'blocker' && blockerRef.current && blockerIdx < MAX_OBSTACLES) {
+        tempMatrix.makeTranslation(o.x, o.y + 2, o.z);
+        tempMatrix.multiply(new THREE.Matrix4().makeRotationY(s.frameCount * 0.05));
+        blockerRef.current.setMatrixAt(blockerIdx, tempMatrix);
+        blockerIdx++;
+      }
+    });
+
+    if (droneRef.current) {
+      for (let i = droneIdx; i < MAX_OBSTACLES; i++) {
+        tempMatrix.makeTranslation(0, -1000, 0);
+        droneRef.current.setMatrixAt(i, tempMatrix);
+      }
+      droneRef.current.instanceMatrix.needsUpdate = true;
+      if (droneRef.current.instanceColor) droneRef.current.instanceColor.needsUpdate = true;
+    }
+    
+    if (turretRef.current) {
+      for (let i = turretIdx; i < MAX_OBSTACLES; i++) {
+        tempMatrix.makeTranslation(0, -1000, 0);
+        turretRef.current.setMatrixAt(i, tempMatrix);
+      }
+      turretRef.current.instanceMatrix.needsUpdate = true;
+      if (turretRef.current.instanceColor) turretRef.current.instanceColor.needsUpdate = true;
+    }
+
+    if (blockerRef.current) {
+      for (let i = blockerIdx; i < MAX_OBSTACLES; i++) {
+        tempMatrix.makeTranslation(0, -1000, 0);
+        blockerRef.current.setMatrixAt(i, tempMatrix);
+      }
+      blockerRef.current.instanceMatrix.needsUpdate = true;
+    }
+  });
+
+  return (
+    <>
+      <instancedMesh ref={droneRef} args={[undefined, undefined, MAX_OBSTACLES]} frustumCulled={false}>
+        <coneGeometry args={[0.6, 1.5, 6]} />
+        <primitive object={droneMat} attach="material" />
+      </instancedMesh>
+      <instancedMesh ref={turretRef} args={[undefined, undefined, MAX_OBSTACLES]} frustumCulled={false}>
+        <cylinderGeometry args={[0.8, 1, 1.5, 8]} />
+        <primitive object={turretMat} attach="material" />
+      </instancedMesh>
+      <instancedMesh ref={blockerRef} args={[undefined, undefined, MAX_OBSTACLES]} frustumCulled={false}>
+        <cylinderGeometry args={[0.5, 1.2, 5, 4]} />
+        <primitive object={blockerMat} attach="material" />
+      </instancedMesh>
+    </>
+  );
+}
+
+function InstancedBullets({ stateRef }: { stateRef: React.MutableRefObject<any> }) {
+  const playerBulletRef = useRef<THREE.InstancedMesh>(null);
+  const enemyBulletRef = useRef<THREE.InstancedMesh>(null);
+  
+  const tempMatrix = useMemo(() => new THREE.Matrix4(), []);
+  
+  const bulletMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#9FE1CB' }), []);
+  const enemyBulletMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#E24B4A' }), []);
+
+  useFrame(() => {
+    const s = stateRef.current;
+    if (!s) return;
+
+    if (playerBulletRef.current) {
+      let idx = 0;
+      s.bullets.forEach((b: any) => {
+        if (idx < MAX_BULLETS) {
+          tempMatrix.makeTranslation(b.x, b.y, b.z);
+          playerBulletRef.current!.setMatrixAt(idx, tempMatrix);
+          idx++;
+        }
+      });
+      for (let i = idx; i < MAX_BULLETS; i++) {
+        tempMatrix.makeTranslation(0, -1000, 0);
+        playerBulletRef.current.setMatrixAt(i, tempMatrix);
+      }
+      playerBulletRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    if (enemyBulletRef.current) {
+      let idx = 0;
+      s.enemyBullets.forEach((b: any) => {
+        if (idx < MAX_ENEMY_BULLETS) {
+          tempMatrix.makeTranslation(b.x, b.y, b.z);
+          enemyBulletRef.current!.setMatrixAt(idx, tempMatrix);
+          idx++;
+        }
+      });
+      for (let i = idx; i < MAX_ENEMY_BULLETS; i++) {
+        tempMatrix.makeTranslation(0, -1000, 0);
+        enemyBulletRef.current.setMatrixAt(i, tempMatrix);
+      }
+      enemyBulletRef.current.instanceMatrix.needsUpdate = true;
+    }
+  });
+
+  return (
+    <>
+      <instancedMesh ref={playerBulletRef} args={[undefined, undefined, MAX_BULLETS]} frustumCulled={false}>
+        <sphereGeometry args={[0.2, 6, 6]} />
+        <primitive object={bulletMat} attach="material" />
+      </instancedMesh>
+      <instancedMesh ref={enemyBulletRef} args={[undefined, undefined, MAX_ENEMY_BULLETS]} frustumCulled={false}>
+        <sphereGeometry args={[0.2, 6, 6]} />
+        <primitive object={enemyBulletMat} attach="material" />
+      </instancedMesh>
+    </>
+  );
+}
+
+function InstancedShards({ stateRef }: { stateRef: React.MutableRefObject<any> }) {
+  const shardRef = useRef<THREE.InstancedMesh>(null);
+  const tempMatrix = useMemo(() => new THREE.Matrix4(), []);
+  const shardMat = useMemo(() => new THREE.MeshStandardMaterial({ 
+    color: '#7F77DD', 
+    emissive: '#7F77DD', 
+    emissiveIntensity: 0.8 
+  }), []);
+
+  useFrame(() => {
+    const s = stateRef.current;
+    if (!s || !shardRef.current) return;
+
+    let idx = 0;
+    s.shards.forEach((sh: any) => {
+      if (!sh.collected && idx < MAX_SHARDS) {
+        tempMatrix.makeTranslation(sh.x, sh.y, sh.z);
+        tempMatrix.multiply(new THREE.Matrix4().makeRotationY(sh.z));
+        shardRef.current!.setMatrixAt(idx, tempMatrix);
+        idx++;
+      }
+    });
+    
+    for (let i = idx; i < MAX_SHARDS; i++) {
+      tempMatrix.makeTranslation(0, -1000, 0);
+      shardRef.current.setMatrixAt(i, tempMatrix);
+    }
+    shardRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={shardRef} args={[undefined, undefined, MAX_SHARDS]} frustumCulled={false}>
+      <octahedronGeometry args={[0.4]} />
+      <primitive object={shardMat} attach="material" />
+    </instancedMesh>
+  );
+}
+
+function InstancedParticles({ stateRef }: { stateRef: React.MutableRefObject<any> }) {
+  const particleRef = useRef<THREE.InstancedMesh>(null);
+  const tempMatrix = useMemo(() => new THREE.Matrix4(), []);
+  const tempScale = useMemo(() => new THREE.Matrix4(), []);
+  const particleMat = useMemo(() => new THREE.MeshBasicMaterial({ 
+    color: '#EF9F27',
+    transparent: true,
+    opacity: 0.8
+  }), []);
+
+  useFrame(() => {
+    const s = stateRef.current;
+    if (!s || !particleRef.current) return;
+
+    let idx = 0;
+    s.particles.forEach((p: any) => {
+      if (idx < MAX_PARTICLES && p.life > 0) {
+        tempMatrix.makeTranslation(p.x, p.y, p.z);
+        tempScale.makeScale(p.life, p.life, p.life);
+        tempMatrix.multiply(tempScale);
+        particleRef.current!.setMatrixAt(idx, tempMatrix);
+        idx++;
+      }
+    });
+    
+    for (let i = idx; i < MAX_PARTICLES; i++) {
+      tempMatrix.makeTranslation(0, -1000, 0);
+      particleRef.current.setMatrixAt(i, tempMatrix);
+    }
+    particleRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={particleRef} args={[undefined, undefined, MAX_PARTICLES]} frustumCulled={false}>
+      <boxGeometry args={[0.2, 0.2, 0.2]} />
+      <primitive object={particleMat} attach="material" />
+    </instancedMesh>
+  );
+}
+
+function InstancedExplosions({ stateRef }: { stateRef: React.MutableRefObject<any> }) {
+  const explosionRef = useRef<THREE.InstancedMesh>(null);
+  const tempMatrix = useMemo(() => new THREE.Matrix4(), []);
+  const tempScale = useMemo(() => new THREE.Matrix4(), []);
+  const explosionMat = useMemo(() => new THREE.MeshBasicMaterial({ 
+    color: '#EF9F27',
+    transparent: true,
+    opacity: 0.6
+  }), []);
+
+  useFrame(() => {
+    const s = stateRef.current;
+    if (!s || !explosionRef.current) return;
+
+    let idx = 0;
+    s.explosions.forEach((ex: any) => {
+      if (idx < MAX_EXPLOSIONS && ex.life > 0) {
+        const scale = 4 - ex.life * 3;
+        tempMatrix.makeTranslation(ex.x, ex.y, ex.z);
+        tempScale.makeScale(scale, scale, scale);
+        tempMatrix.multiply(tempScale);
+        explosionRef.current!.setMatrixAt(idx, tempMatrix);
+        idx++;
+      }
+    });
+    
+    for (let i = idx; i < MAX_EXPLOSIONS; i++) {
+      tempMatrix.makeTranslation(0, -1000, 0);
+      explosionRef.current.setMatrixAt(i, tempMatrix);
+    }
+    explosionRef.current.instanceMatrix.needsUpdate = true;
+  });
+
+  return (
+    <instancedMesh ref={explosionRef} args={[undefined, undefined, MAX_EXPLOSIONS]} frustumCulled={false}>
+      <torusGeometry args={[0.5, 0.1, 6, 12]} />
+      <primitive object={explosionMat} attach="material" />
+    </instancedMesh>
+  );
+}
+
+function Player({ stateRef }: { stateRef: React.MutableRefObject<any> }) {
+  const playerRef = useRef<THREE.Group>(null);
+  const [visible, setVisible] = useState(true);
+  
+  const playerMat = useMemo(() => new THREE.MeshStandardMaterial({ 
+    color: '#1D9E75', 
+    emissive: '#1D9E75', 
+    emissiveIntensity: 0.5 
+  }), []);
+
+  useFrame(() => {
+    const s = stateRef.current;
+    if (!s || !playerRef.current) return;
+
+    playerRef.current.position.x = s.player.x;
+    const tilt = (s.player.targetX - s.player.x) * 0.1;
+    playerRef.current.rotation.z = -tilt;
+    
+    const shouldBeVisible = !(s.player.flashTimer > 0 && Math.floor(s.player.flashTimer / 4) % 2 === 0);
+    if (visible !== shouldBeVisible) {
+      setVisible(shouldBeVisible);
+    }
+  });
+
+  return (
+    <group ref={playerRef} visible={visible}>
+      <mesh position={[0, 0, -0.2]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.2, 0.4, 2, 6]} />
+        <primitive object={playerMat} attach="material" />
+      </mesh>
+      <mesh position={[0, 0, -1.2]} rotation={[-Math.PI / 2, 0, 0]}>
+        <coneGeometry args={[0.2, 0.8, 6]} />
+        <primitive object={playerMat} attach="material" />
+      </mesh>
+      <mesh position={[0, 0, 0.2]} rotation={[Math.PI / 2, 0, 0]}>
+        <boxGeometry args={[2.5, 0.8, 0.1]} />
+        <primitive object={playerMat} attach="material" />
+      </mesh>
+      <mesh position={[0, 0.25, -0.5]}>
+        <boxGeometry args={[0.3, 0.3, 0.6]} />
+        <meshStandardMaterial color="#33ccff" emissive="#00aaaa" emissiveIntensity={0.8} />
+      </mesh>
+      <mesh position={[-0.3, 0, 1.05]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.1, 0.05, 0.2, 6]} />
+        <meshBasicMaterial color="#00ffff" />
+      </mesh>
+      <mesh position={[0.3, 0, 1.05]} rotation={[Math.PI / 2, 0, 0]}>
+        <cylinderGeometry args={[0.1, 0.05, 0.2, 6]} />
+        <meshBasicMaterial color="#00ffff" />
+      </mesh>
+    </group>
+  );
+}
+
+function FrameLimiter() {
+  const { gl } = useThree();
+  
+  useEffect(() => {
+    gl.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  }, [gl]);
+  
+  return null;
+}
+
+function Scene({ onScoreUpdate, onSignal, onGameOver, onAmmoUpdate, onLivesUpdate, onMultUpdate, onDistUpdate, running }: GameProps) {
+  const stateRef = useRef<any>({
+    player: { lane: 1, x: LANES[1], targetX: LANES[1], flashTimer: 0 },
+    obstacles: [],
+    shards: [],
+    bullets: [],
+    enemyBullets: [],
+    particles: [],
+    explosions: [],
+    score: 0, dist: 0, mult: 1, multTimer: 0,
+    lives: 3, ammo: MAX_AMMO, reloadTimer: 0,
+    speed: 4, frameCount: 0, spawnTimer: 0,
+    signalTimer: 0, signalIdx: 0,
+  });
+
+  const keysRef = useRef<Record<string, boolean>>({});
+  const lastUpdateRef = useRef(0);
+
+  useEffect(() => {
+    if (running) {
+      stateRef.current = {
+        player: { lane: 1, x: LANES[1], targetX: LANES[1], flashTimer: 0 },
+        obstacles: [], shards: [], bullets: [], enemyBullets: [], particles: [], explosions: [],
+        score: 0, dist: 0, mult: 1, multTimer: 0,
+        lives: 3, ammo: MAX_AMMO, reloadTimer: 0,
+        speed: 4, frameCount: 0, spawnTimer: 0,
+        signalTimer: 0, signalIdx: 0,
+      };
+    }
+  }, [running]);
 
   const playerShoot = useCallback(() => {
     const s = stateRef.current;
     if (!s || s.ammo <= 0 || s.reloadTimer > 0) return;
-    s.bullets.push({ x: PX + 16, y: s.player.y, speed: 13 });
-    s.ammo--;
-    if (s.ammo <= 0) s.reloadTimer = 85;
-    onAmmoUpdate(s.ammo);
+    if (s.bullets.length < MAX_BULLETS) {
+      s.bullets.push({ x: s.player.x, y: 0, z: -2, speed: 0.8 });
+      s.ammo--;
+      if (s.ammo <= 0) s.reloadTimer = 85;
+      onAmmoUpdate(s.ammo);
+    }
   }, [onAmmoUpdate]);
 
   useEffect(() => {
@@ -95,14 +490,14 @@ export default function Game({ onScoreUpdate, onSignal, onGameOver, onAmmoUpdate
       const s = stateRef.current;
       if (!s || !running) return;
       if (e.type === 'keydown') {
-        if (e.key === 'ArrowUp' || e.key === 'w' || e.key === 'W') {
+        if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
           s.player.lane = Math.max(0, s.player.lane - 1);
-          s.player.targetY = LC[s.player.lane];
+          s.player.targetX = LANES[s.player.lane];
           e.preventDefault();
         }
-        if (e.key === 'ArrowDown' || e.key === 's' || e.key === 'S') {
+        if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
           s.player.lane = Math.min(2, s.player.lane + 1);
-          s.player.targetY = LC[s.player.lane];
+          s.player.targetX = LANES[s.player.lane];
           e.preventDefault();
         }
         if (e.key === ' ' || e.key === 'f' || e.key === 'F') {
@@ -117,14 +512,11 @@ export default function Game({ onScoreUpdate, onSignal, onGameOver, onAmmoUpdate
   }, [running, playerShoot]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
     let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
     const onTouchStart = (e: TouchEvent) => {
       touchStartX = e.touches[0].clientX;
       touchStartY = e.touches[0].clientY;
       touchStartTime = Date.now();
-      e.preventDefault();
     };
     const onTouchEnd = (e: TouchEvent) => {
       const s = stateRef.current;
@@ -133,344 +525,232 @@ export default function Game({ onScoreUpdate, onSignal, onGameOver, onAmmoUpdate
       const dx = e.changedTouches[0].clientX - touchStartX;
       const dt = Date.now() - touchStartTime;
       if (Math.abs(dy) < 12 && Math.abs(dx) < 12 && dt < 220) { playerShoot(); }
-      else if (dy < -20) { s.player.lane = Math.max(0, s.player.lane - 1); s.player.targetY = LC[s.player.lane]; }
-      else if (dy > 20) { s.player.lane = Math.min(2, s.player.lane + 1); s.player.targetY = LC[s.player.lane]; }
-      e.preventDefault();
+      else if (dx < -20) { s.player.lane = Math.max(0, s.player.lane - 1); s.player.targetX = LANES[s.player.lane]; }
+      else if (dx > 20) { s.player.lane = Math.min(2, s.player.lane + 1); s.player.targetX = LANES[s.player.lane]; }
     };
-    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
-    canvas.addEventListener('touchend', onTouchEnd, { passive: false });
-    return () => { canvas.removeEventListener('touchstart', onTouchStart); canvas.removeEventListener('touchend', onTouchEnd); };
+    window.addEventListener('touchstart', onTouchStart, { passive: false });
+    window.addEventListener('touchend', onTouchEnd, { passive: false });
+    return () => { window.removeEventListener('touchstart', onTouchStart); window.removeEventListener('touchend', onTouchEnd); };
   }, [running, playerShoot]);
 
-  useEffect(() => {
-    if (!running) { cancelAnimationFrame(animRef.current); return; }
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+  const addExplosion = useCallback((x: number, y: number, z: number) => {
+    const s = stateRef.current;
+    if (s.explosions.length < MAX_EXPLOSIONS) {
+      s.explosions.push({ id: Math.random(), x, y, z, life: 1 });
+    }
 
-    const handleResize = () => {
-      const parent = canvas.parentElement;
-      if (parent) {
-        canvas.height = 300;
-        canvas.width = Math.max(300, Math.floor(300 * (parent.clientWidth / parent.clientHeight)));
-      }
-    };
-    window.addEventListener('resize', handleResize);
-    handleResize();
-
-    reset();
-
-    const loop = () => {
-      const W = canvas.width;
-      const s = stateRef.current;
-      s.frameCount++;
-      s.dist += s.speed * 0.05;
-      s.speed = 4 + Math.floor(s.dist / 80) * 0.5;
-      const enemyBulletSpeed = 5.5 + Math.floor(s.dist / 100) * 0.6;
-      const droneExtraSpeed = 2.5 + Math.floor(s.dist / 60) * 0.4;
-
-      ctx.fillStyle = '#0a0b10';
-      ctx.fillRect(0, 0, W, 300);
-
-      // Grid
-      ctx.strokeStyle = 'rgba(83,74,183,0.1)';
-      ctx.lineWidth = 0.5;
-      for (let i = 1; i < LANES; i++) { ctx.beginPath(); ctx.moveTo(0, i * LH); ctx.lineTo(W, i * LH); ctx.stroke(); }
-      const scroll = (s.frameCount * s.speed * 0.35) % 60;
-      ctx.strokeStyle = 'rgba(83,74,183,0.05)';
-      for (let x = -scroll; x < W; x += 60) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 300); ctx.stroke(); }
-
-      s.player.y += (s.player.targetY - s.player.y) * 0.18;
-      if (s.player.flashTimer > 0) s.player.flashTimer--;
-      if (s.reloadTimer > 0) {
-        s.reloadTimer--;
-        if (s.reloadTimer === 0) { s.ammo = MAX_AMMO; onAmmoUpdate(s.ammo); }
-      }
-
-      const spawnRate = Math.max(30, 80 - Math.floor(s.dist / 60) * 4);
-      s.spawnTimer++;
-      if (s.spawnTimer >= spawnRate) {
-        s.spawnTimer = 0;
-        if (Math.random() < 0.72) {
-          const lane = Math.floor(Math.random() * 3);
-          const type = Math.random() < 0.48 ? 'drone' : 'turret';
-          s.obstacles.push({
-            x: W + 30, lane, y: LC[lane],
-            w: type === 'drone' ? 28 : 24,
-            h: type === 'drone' ? 16 : 28,
-            type, hp: type === 'turret' ? 2 : 1,
-            shootTimer: type === 'turret' ? Math.floor(Math.random() * 60) + 10 : 9999,
-            pulse: 0, hitFlash: 0,
-          });
-        } else {
-          const lane = Math.floor(Math.random() * 3);
-          s.shards.push({ x: W + 20, lane, y: LC[lane], r: 7, collected: false });
-        }
-        if (Math.random() < 0.32) {
-          const lane = Math.floor(Math.random() * 3);
-          s.shards.push({ x: W + 20, lane, y: LC[lane], r: 7, collected: false });
-        }
-      }
-
-      s.obstacles.forEach(o => {
-        if (o.hp <= 0) return;
-        o.x -= s.speed;
-        if (o.type === 'drone') o.x -= droneExtraSpeed;
-        if (o.type === 'turret') {
-          o.shootTimer--;
-          const fireRate = Math.max(40, 90 - Math.floor(s.dist / 100) * 7);
-          if (o.shootTimer <= 0) {
-            o.shootTimer = fireRate;
-            s.enemyBullets.push({ x: o.x - o.w / 2 - 16, y: o.y, speed: enemyBulletSpeed });
-          }
-        }
+    const particlesToAdd = Math.min(8, MAX_PARTICLES - s.particles.length);
+    for (let i = 0; i < particlesToAdd; i++) {
+      s.particles.push({
+        id: Math.random(),
+        x, y, z,
+        vx: (Math.random() - 0.5) * 0.8,
+        vy: (Math.random() - 0.5) * 0.8,
+        vz: (Math.random() - 0.5) * 0.8,
+        life: 1,
       });
+    }
+  }, []);
 
-      s.bullets.forEach(b => { b.x += b.speed; });
-      s.enemyBullets.forEach(b => { b.x -= b.speed; });
-      s.shards.forEach(sh => { sh.x -= s.speed; });
-      s.particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.life -= 0.03; });
-      s.floatTexts.forEach(ft => { ft.y += ft.vy; ft.life -= 0.022; });
-      s.explosions.forEach(exp => {
-        exp.life -= 0.025;
-        exp.rings.forEach(ring => { ring.r += (ring.maxR - ring.r) * 0.12; ring.life -= 0.04; });
-        exp.shards.forEach(sh => { sh.x += sh.vx; sh.y += sh.vy; sh.vx *= 0.93; sh.vy *= 0.93; sh.rot += sh.rotSpeed; sh.life -= 0.028; });
-      });
+  useFrame((_, delta) => {
+    if (!running) return;
+    const s = stateRef.current;
 
-      s.bullets = s.bullets.filter(b => b.x < W + 20);
-      s.enemyBullets = s.enemyBullets.filter(b => b.x > -20);
-      s.obstacles = s.obstacles.filter(o => o.x > -60);
-      s.shards = s.shards.filter(sh => sh.x > -20);
-      s.particles = s.particles.filter(p => p.life > 0);
-      s.explosions = s.explosions.filter(e => e.life > 0);
-      s.floatTexts = s.floatTexts.filter(ft => ft.life > 0);
+    s.frameCount++;
+    s.dist += s.speed * 0.05;
+    s.speed = 6 + Math.floor(s.dist / 70) * 0.8;
+    const baseSpeedZ = s.speed * 0.04;
+    const enemyBulletSpeed = baseSpeedZ + 0.15;
+    const droneExtraSpeed = baseSpeedZ * 1.5;
 
-      // Bullet-obstacle collisions
-      s.bullets.forEach(b => {
-        s.obstacles.forEach(o => {
-          if (o.hp <= 0) return;
-          if (Math.abs(b.x - o.x) < o.w / 2 + 7 && Math.abs(b.y - o.y) < o.h / 2 + 7) {
-            b.x = W + 100;
-            o.hp--;
-            o.hitFlash = 10;
-            if (o.hp <= 0) {
-              spawnExplosion(s, o.x, o.y, o.type);
-              const pts = o.type === 'turret' ? 50 * s.mult : 25 * s.mult;
-              s.score += pts;
-              s.floatTexts.push({ x: o.x, y: o.y - 20, text: '+' + pts, color: o.type === 'turret' ? '#EF9F27' : '#F0997B', life: 1, vy: -1.2 });
-              s.multTimer = 200;
-              s.mult = Math.min(s.mult + 1, 8);
-              onMultUpdate(s.mult);
-            } else {
-              addParticles(s, o.x, o.y, '#EF9F27', 5);
-            }
-          }
+    s.player.x += (s.player.targetX - s.player.x) * 0.18;
+    if (s.player.flashTimer > 0) s.player.flashTimer--;
+    if (s.reloadTimer > 0) {
+      s.reloadTimer--;
+      if (s.reloadTimer === 0) { s.ammo = MAX_AMMO; onAmmoUpdate(s.ammo); }
+    }
+
+    if (keysRef.current[' '] || keysRef.current['f'] || keysRef.current['F']) {
+      if (s.ammo > 0 && s.reloadTimer <= 0 && s.frameCount % 8 === 0) playerShoot();
+    }
+
+    const spawnRate = Math.max(25, 60 - Math.floor(s.dist / 50) * 5);
+    s.spawnTimer++;
+    if (s.spawnTimer >= spawnRate && s.obstacles.length < MAX_OBSTACLES) {
+      s.spawnTimer = 0;
+      if (Math.random() < 0.82) {
+        const lane = Math.floor(Math.random() * 3);
+        const typeRand = Math.random();
+        let type = 'drone';
+        if (typeRand > 0.75) type = 'turret';
+        else if (typeRand > 0.45) type = 'blocker';
+
+        s.obstacles.push({
+          id: s.frameCount,
+          x: LANES[lane], y: 0, z: -40, type,
+          hp: type === 'turret' ? 2 : type === 'blocker' ? 999 : 1,
+          shootTimer: type === 'turret' ? Math.floor(Math.random() * 60) + 10 : 9999,
+          hitFlash: 0
         });
-      });
+      } else if (s.shards.length < MAX_SHARDS) {
+        const lane = Math.floor(Math.random() * 3);
+        s.shards.push({ id: s.frameCount, x: LANES[lane], y: 0, z: -40 });
+      }
+    }
 
-      // Player-obstacle collisions
-      s.obstacles.forEach(o => {
-        if (o.hp <= 0) return;
-        if (Math.abs(PX - o.x) < o.w / 2 + 13 && Math.abs(s.player.y - o.y) < o.h / 2 + 10) {
-          spawnExplosion(s, o.x, o.y, o.type);
-          o.hp = 0;
-          if (s.player.flashTimer <= 0) {
-            s.player.flashTimer = 55;
-            addParticles(s, PX, s.player.y, '#E24B4A', 10);
-            s.lives--;
-            s.mult = 1; s.multTimer = 0;
-            onLivesUpdate(s.lives);
-            onMultUpdate(1);
-            if (s.lives <= 0) { onGameOver(s.score, Math.floor(s.dist)); return; }
+    s.obstacles.forEach((o: any) => {
+      if (o.type === 'drone') o.z += droneExtraSpeed;
+      else o.z += baseSpeedZ;
+
+      if (o.type === 'turret') {
+        o.shootTimer--;
+        const fireRate = Math.max(25, 75 - Math.floor(s.dist / 90) * 8);
+        if (o.shootTimer <= 0 && o.hp > 0 && s.enemyBullets.length < MAX_ENEMY_BULLETS) {
+          o.shootTimer = fireRate;
+          s.enemyBullets.push({ id: Math.random(), x: o.x, y: 0, z: o.z + 1, speed: enemyBulletSpeed });
+        }
+      }
+      if (o.hitFlash > 0) o.hitFlash--;
+    });
+
+    s.bullets.forEach((b: any) => b.z -= b.speed);
+    s.enemyBullets.forEach((b: any) => b.z += b.speed);
+    s.shards.forEach((sh: any) => sh.z += baseSpeedZ);
+    s.particles.forEach((p: any) => { p.x += p.vx; p.y += p.vy; p.z += p.vz; p.life -= 0.04; });
+    s.explosions.forEach((ex: any) => { ex.life -= 0.05; ex.z += baseSpeedZ; });
+
+    s.bullets.forEach((b: any) => {
+      s.obstacles.forEach((o: any) => {
+        if (o.hp > 0 && Math.abs(b.z - o.z) < 1.5 && Math.abs(b.x - o.x) < 1) {
+          b.z = -100;
+          o.hp--;
+          o.hitFlash = 10;
+          if (o.hp <= 0) {
+            addExplosion(o.x, o.y, o.z);
+            const pts = o.type === 'turret' ? 50 * s.mult : 25 * s.mult;
+            s.score += pts;
+            s.multTimer = 200;
+            s.mult = Math.min(s.mult + 1, 8);
+            onMultUpdate(s.mult);
           }
         }
       });
+    });
 
-      // Enemy bullet-player collisions
-      s.enemyBullets.forEach(b => {
-        if (Math.abs(b.x - PX) < 16 && Math.abs(b.y - s.player.y) < 14) {
-          addParticles(s, b.x, b.y, '#E24B4A', 8);
-          b.x = -100;
-          if (s.player.flashTimer <= 0) {
-            s.player.flashTimer = 55;
-            addParticles(s, PX, s.player.y, '#E24B4A', 10);
-            s.lives--;
-            s.mult = 1; s.multTimer = 0;
-            onLivesUpdate(s.lives);
-            onMultUpdate(1);
-            if (s.lives <= 0) { onGameOver(s.score, Math.floor(s.dist)); return; }
-          }
+    s.obstacles.forEach((o: any) => {
+      if (o.hp > 0 && Math.abs(0 - o.z) < 1 && Math.abs(s.player.x - o.x) < 1.0) {
+        o.hp = 0;
+        addExplosion(o.x, o.y, o.z);
+        if (s.player.flashTimer <= 0) {
+          s.player.flashTimer = 55;
+          addExplosion(s.player.x, 0, 0);
+          s.lives--;
+          s.mult = 1; s.multTimer = 0;
+          onLivesUpdate(s.lives);
+          onMultUpdate(1);
+          if (s.lives <= 0) { onGameOver(s.score, Math.floor(s.dist)); return; }
         }
-      });
+      }
+    });
 
-      // Shard collection
-      s.shards.forEach(sh => {
-        if (sh.collected) return;
-        if (Math.abs(PX - sh.x) < 20 && Math.abs(s.player.y - sh.y) < 20) {
-          sh.collected = true;
-          addParticles(s, sh.x, sh.y, '#7F77DD', 8);
-          s.score += 10 * s.mult;
-          s.multTimer = 180;
-          s.mult = Math.min(s.mult + 1, 8);
-          onMultUpdate(s.mult);
+    s.enemyBullets.forEach((b: any) => {
+      if (Math.abs(0 - b.z) < 1 && Math.abs(s.player.x - b.x) < 1.0) {
+        b.z = 100;
+        if (s.player.flashTimer <= 0) {
+          s.player.flashTimer = 55;
+          addExplosion(s.player.x, 0, 0);
+          s.lives--;
+          s.mult = 1; s.multTimer = 0;
+          onLivesUpdate(s.lives);
+          onMultUpdate(1);
+          if (s.lives <= 0) { onGameOver(s.score, Math.floor(s.dist)); return; }
         }
-      });
+      }
+    });
 
-      s.score += Math.floor(s.speed * 0.1);
-      if (s.multTimer > 0) { s.multTimer--; if (s.multTimer === 0) { s.mult = Math.max(1, s.mult - 1); onMultUpdate(s.mult); } }
+    s.shards.forEach((sh: any) => {
+      if (!sh.collected && Math.abs(0 - sh.z) < 1.5 && Math.abs(s.player.x - sh.x) < 1.0) {
+        sh.collected = true;
+        addExplosion(sh.x, sh.y, sh.z);
+        s.score += 10 * s.mult;
+        s.multTimer = 180;
+        s.mult = Math.min(s.mult + 1, 8);
+        onMultUpdate(s.mult);
+      }
+    });
 
-      s.signalTimer++;
-      if (s.signalTimer > 300) { s.signalTimer = 0; onSignal(SIGNALS[s.signalIdx % SIGNALS.length]); s.signalIdx++; }
+    s.obstacles = s.obstacles.filter((o: any) => o.z < 5 && o.hp > 0);
+    s.bullets = s.bullets.filter((b: any) => b.z > -40);
+    s.enemyBullets = s.enemyBullets.filter((b: any) => b.z < 5);
+    s.shards = s.shards.filter((sh: any) => sh.z < 5 && !sh.collected);
+    s.particles = s.particles.filter((p: any) => p.life > 0);
+    s.explosions = s.explosions.filter((ex: any) => ex.life > 0);
 
+    s.score += Math.floor(s.speed * 0.1);
+    if (s.multTimer > 0) { s.multTimer--; if (s.multTimer === 0) { s.mult = Math.max(1, s.mult - 1); onMultUpdate(s.mult); } }
+
+    s.signalTimer++;
+    if (s.signalTimer > 300) { s.signalTimer = 0; onSignal(SIGNALS[s.signalIdx % SIGNALS.length]); s.signalIdx++; }
+
+    const now = performance.now();
+    if (now - lastUpdateRef.current > 50) {
+      lastUpdateRef.current = now;
       onScoreUpdate(s.score);
       onDistUpdate(Math.floor(s.dist));
-
-      // Draw obstacles
-      s.obstacles.forEach(o => {
-        if (o.hp <= 0) return;
-        o.pulse = ((o.pulse || 0) + 0.07) % (Math.PI * 2);
-        const flash = o.hitFlash > 0 && Math.floor(o.hitFlash / 3) % 2 === 0;
-        if (o.type === 'drone') {
-          ctx.fillStyle = flash ? '#ffaa88' : '#993C1D';
-          ctx.fillRect(o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
-          ctx.fillStyle = flash ? 'rgba(255,180,120,0.4)' : 'rgba(216,90,48,0.25)';
-          ctx.fillRect(o.x - o.w / 2 - 5, o.y - 3, o.w + 10, 6);
-          ctx.fillStyle = flash ? '#ffeecc' : '#E24B4A';
-          ctx.fillRect(o.x - 3, o.y - 3, 6, 6);
-          const tf = Math.sin(o.pulse * 4) * 3;
-          ctx.fillStyle = 'rgba(239,159,39,0.7)';
-          ctx.beginPath();
-          ctx.moveTo(o.x - o.w / 2, o.y - 3);
-          ctx.lineTo(o.x - o.w / 2 - 8 - tf, o.y);
-          ctx.lineTo(o.x - o.w / 2, o.y + 3);
-          ctx.closePath(); ctx.fill();
-        } else {
-          ctx.fillStyle = flash ? '#ffaa66' : '#712B13';
-          ctx.fillRect(o.x - o.w / 2, o.y - o.h / 2, o.w, o.h);
-          ctx.fillStyle = flash ? 'rgba(255,160,80,0.5)' : '#993C1D';
-          ctx.fillRect(o.x - o.w / 2 + 3, o.y - 4, o.w - 6, 8);
-          ctx.strokeStyle = flash ? '#ffddaa' : '#E24B4A';
-          ctx.lineWidth = 3;
-          ctx.beginPath(); ctx.moveTo(o.x - o.w / 2, o.y); ctx.lineTo(o.x - o.w / 2 - 16, o.y); ctx.stroke();
-          if (o.hp === 2) {
-            ctx.fillStyle = 'rgba(226,75,74,0.6)';
-            ctx.beginPath(); ctx.arc(o.x, o.y - o.h / 2 - 5, 4, 0, Math.PI * 2); ctx.fill();
-          }
-        }
-        if (o.hitFlash > 0) o.hitFlash--;
-      });
-
-      // Draw shards
-      s.shards.forEach(sh => {
-        if (sh.collected) return;
-        ctx.fillStyle = '#7F77DD';
-        ctx.beginPath();
-        ctx.moveTo(sh.x, sh.y - sh.r);
-        ctx.lineTo(sh.x + sh.r * 0.6, sh.y);
-        ctx.lineTo(sh.x, sh.y + sh.r);
-        ctx.lineTo(sh.x - sh.r * 0.6, sh.y);
-        ctx.closePath(); ctx.fill();
-      });
-
-      // Draw player bullets
-      s.bullets.forEach(b => {
-        ctx.fillStyle = '#9FE1CB';
-        ctx.beginPath(); ctx.ellipse(b.x, b.y, 9, 3, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = 'rgba(159,225,203,0.25)';
-        ctx.beginPath(); ctx.ellipse(b.x - 5, b.y, 14, 4, 0, 0, Math.PI * 2); ctx.fill();
-      });
-
-      // Draw enemy bullets
-      s.enemyBullets.forEach(b => {
-        ctx.fillStyle = '#E24B4A';
-        ctx.beginPath(); ctx.ellipse(b.x, b.y, 9, 3, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = 'rgba(226,75,74,0.25)';
-        ctx.beginPath(); ctx.ellipse(b.x + 5, b.y, 14, 4, 0, 0, Math.PI * 2); ctx.fill();
-      });
-
-      // Draw explosions
-      s.explosions.forEach(exp => {
-        exp.rings.forEach(ring => {
-          ctx.globalAlpha = Math.max(0, ring.life * 0.55);
-          ctx.strokeStyle = ring.color;
-          ctx.lineWidth = 1.5;
-          ctx.beginPath(); ctx.arc(ring.x, ring.y, ring.r, 0, Math.PI * 2); ctx.stroke();
-        });
-        exp.shards.forEach(sh => {
-          ctx.globalAlpha = Math.max(0, sh.life);
-          ctx.save();
-          ctx.translate(sh.x, sh.y);
-          ctx.rotate(sh.rot);
-          ctx.fillStyle = sh.color;
-          ctx.fillRect(-sh.size / 2, -sh.size / 2, sh.size, sh.size);
-          ctx.restore();
-        });
-        ctx.globalAlpha = 1;
-      });
-
-      // Draw particles
-      s.particles.forEach(p => {
-        ctx.globalAlpha = Math.max(0, p.life);
-        ctx.fillStyle = p.color;
-        ctx.beginPath(); ctx.arc(p.x, p.y, 3 * p.life, 0, Math.PI * 2); ctx.fill();
-      });
-      ctx.globalAlpha = 1;
-
-      // Draw float texts
-      s.floatTexts.forEach(ft => {
-        ctx.globalAlpha = Math.max(0, ft.life);
-        ctx.fillStyle = ft.color;
-        ctx.font = '500 12px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(ft.text, ft.x, ft.y);
-      });
-      ctx.globalAlpha = 1;
-      ctx.textAlign = 'left';
-
-      // Draw player
-      const py = s.player.y;
-      if (!(s.player.flashTimer > 0 && Math.floor(s.player.flashTimer / 4) % 2 === 0)) {
-        ctx.fillStyle = '#1D9E75';
-        ctx.beginPath();
-        ctx.moveTo(PX + 18, py); ctx.lineTo(PX - 10, py - 12); ctx.lineTo(PX - 6, py); ctx.lineTo(PX - 10, py + 12);
-        ctx.closePath(); ctx.fill();
-        ctx.fillStyle = 'rgba(29,158,117,0.13)';
-        ctx.beginPath(); ctx.arc(PX, py, 22, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = 'rgba(29,158,117,0.3)';
-        ctx.lineWidth = 0.5;
-        ctx.beginPath(); ctx.arc(PX, py, 22, 0, Math.PI * 2); ctx.stroke();
-      }
-
-      // Reload bar
-      if (s.reloadTimer > 0) {
-        const pct = 1 - s.reloadTimer / 85;
-        ctx.fillStyle = 'rgba(83,74,183,0.18)';
-        ctx.fillRect(PX - 22, py + 26, 44, 4);
-        ctx.fillStyle = '#534AB7';
-        ctx.fillRect(PX - 22, py + 26, 44 * pct, 4);
-      }
-
-      // Auto-shoot if space held
-      if (keysRef.current[' '] || keysRef.current['f'] || keysRef.current['F']) {
-        if (s.ammo > 0 && s.reloadTimer <= 0 && s.frameCount % 8 === 0) playerShoot();
-      }
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-
-    animRef.current = requestAnimationFrame(loop);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      cancelAnimationFrame(animRef.current);
-    };
-  }, [running, reset, onScoreUpdate, onSignal, onGameOver, onAmmoUpdate, onLivesUpdate, onMultUpdate, onDistUpdate, playerShoot]);
+    }
+  });
 
   return (
-    <canvas
-      ref={canvasRef}
-      id="gc"
-      style={{ display: 'block', width: '100%', height: '100%', cursor: 'crosshair' }}
-    />
+    <>
+      <color attach="background" args={['#0a0b10']} />
+      <ambientLight intensity={0.4} />
+      <directionalLight position={[10, 20, 10]} intensity={1.2} color="#ccaaff" />
+      <pointLight position={[0, 5, -20]} intensity={1.5} color="#EF9F27" distance={50} />
+
+      <FrameLimiter />
+      <GridTunnel stateRef={stateRef} />
+      <Player stateRef={stateRef} />
+      <InstancedObstacles stateRef={stateRef} />
+      <InstancedBullets stateRef={stateRef} />
+      <InstancedShards stateRef={stateRef} />
+      <InstancedParticles stateRef={stateRef} />
+      <InstancedExplosions stateRef={stateRef} />
+    </>
+  );
+}
+
+export default function Game(props: GameProps) {
+  const [isWebGLSupported, setIsWebGLSupported] = useState<boolean | null>(null);
+  const [useCompatMode, setUseCompatMode] = useState(false);
+
+  useEffect(() => {
+    setIsWebGLSupported(supportsWebGL());
+  }, []);
+
+  if (isWebGLSupported === null) return <RendererBooting />;
+  if (!isWebGLSupported || useCompatMode) return <Game2D {...props} />;
+
+  return (
+    <div style={{ width: '100%', height: '100%' }}>
+      <GameCanvasErrorBoundary
+        fallback={<Game2D {...props} />}
+        onError={() => setUseCompatMode(true)}
+      >
+        <Canvas
+          camera={{ position: [0, 4, 8], fov: 60, rotation: [-0.2, 0, 0] }}
+          dpr={[1, 1.25]}
+          gl={{
+            antialias: false,
+            alpha: false,
+            stencil: false,
+            depth: true,
+            powerPreference: 'low-power',
+            precision: 'mediump',
+          }}
+        >
+          <Scene {...props} />
+        </Canvas>
+      </GameCanvasErrorBoundary>
+    </div>
   );
 }
