@@ -53,6 +53,9 @@ const MAX_PROJECTILES = 70;
 const MAX_PARTICLES = 120;
 const MAX_POWERUPS = 8;
 const MAX_EXPLOSIONS = 20;
+// React.StrictMode can mount/unmount components twice in development; keep a small
+// dedupe set so each intro dialogue line is only spoken once per intro session.
+const SPOKEN_INTRO_LINES = new Set<string>();
 
 function generateStars(count: number, palette: string[]): Star[] {
   const colors = palette.length ? palette : ['#ffffff', '#aaccff', '#ffddaa', '#ffaaaa', '#aaffaa'];
@@ -1923,6 +1926,44 @@ export default function SpaceGame({
   const [isReady, setIsReady] = useState(false);
   const [ghostPosition, setGhostPosition] = useState<GhostPosition | null>(null);
   const [introHud, setIntroHud] = useState({ fade: 1, line: null as string | null, active: true, progress: 0 });
+  const lastSpokenLineRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    // Keep dialogue audio aligned with the rendered line and avoid re-speaking every frame.
+    if (!running || !introHud.active) {
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      SPOKEN_INTRO_LINES.clear();
+      lastSpokenLineRef.current = null;
+      return;
+    }
+
+    const line = introHud.line;
+    if (!line) return;
+    if (lastSpokenLineRef.current === line) return;
+    if (SPOKEN_INTRO_LINES.has(line)) return;
+    lastSpokenLineRef.current = line;
+    SPOKEN_INTRO_LINES.add(line);
+
+    if (!('speechSynthesis' in window) || typeof window.SpeechSynthesisUtterance === 'undefined') return;
+
+    try {
+      window.speechSynthesis.cancel();
+      const utterance = new window.SpeechSynthesisUtterance(line);
+      utterance.rate = 0.95;
+      utterance.pitch = 1.0;
+      utterance.volume = 1;
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      // Some browsers block speechSynthesis until a user gesture; ignore if blocked.
+    }
+  }, [introHud.active, introHud.line, running]);
+
+  useEffect(() => {
+    // Ensure we don't leave queued speech playing after unmount.
+    return () => {
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    };
+  }, []);
 
   useEffect(() => {
     engineRef.current = new GameEngine();
