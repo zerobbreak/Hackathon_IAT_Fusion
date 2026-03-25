@@ -23,6 +23,26 @@ interface SoundDef {
   noise?: boolean;
 }
 
+interface AudioFileDef {
+  src: string;
+  volume: number;
+}
+
+const AUDIO_FILES: Partial<Record<SoundName, AudioFileDef>> = {
+  shoot: {
+    src: '/sound-effects/shooting.mpeg',
+    volume: 0.5,
+  },
+  game_over: {
+    src: '/sound-effects/end_audio.mpeg',
+    volume: 0.7,
+  },
+  powerup: {
+    src: '/sound-effects/token_collection.mpeg',
+    volume: 0.6,
+  },
+};
+
 const SOUND_DEFS: Record<SoundName, SoundDef> = {
   shoot: {
     frequency: 880,
@@ -114,16 +134,46 @@ export class AudioManager {
   private engineOscillator: OscillatorNode | null = null;
   private engineGain: GainNode | null = null;
   private engineRunning = false;
+  
+  private audioElements: Map<SoundName, HTMLAudioElement> = new Map();
 
   init() {
     if (this.context) return;
     
     try {
       this.context = new (window.AudioContext || (window as any).webkitAudioContext)();
+      this.preloadAudioFiles();
     } catch (e) {
       console.warn('Web Audio API not supported');
       this.config.enabled = false;
     }
+  }
+
+  private preloadAudioFiles() {
+    Object.entries(AUDIO_FILES).forEach(([name, def]) => {
+      if (!def) return;
+      
+      const audio = new Audio();
+      audio.src = def.src;
+      audio.preload = 'auto';
+      audio.load();
+      this.audioElements.set(name as SoundName, audio);
+    });
+  }
+
+  private playAudioFile(name: SoundName): boolean {
+    const def = AUDIO_FILES[name];
+    if (!def) return false;
+
+    const cachedAudio = this.audioElements.get(name);
+    if (cachedAudio) {
+      const audio = cachedAudio.cloneNode() as HTMLAudioElement;
+      audio.volume = def.volume * this.config.sfxVolume * this.config.masterVolume;
+      audio.play().catch(() => {});
+      return true;
+    }
+
+    return false;
   }
 
   private ensureContext() {
@@ -135,6 +185,12 @@ export class AudioManager {
   }
 
   play(name: SoundName) {
+    if (!this.config.enabled) return;
+
+    if (AUDIO_FILES[name] && this.playAudioFile(name)) {
+      return;
+    }
+
     if (!this.ensureContext() || !this.context) return;
 
     const def = SOUND_DEFS[name];

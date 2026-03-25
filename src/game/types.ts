@@ -43,7 +43,7 @@ export interface Spacecraft extends GameEntity {
   slowMotionTimer: number;
 }
 
-export type ObstacleType = 'asteroid' | 'debris' | 'drone' | 'anomaly' | 'mine' | 'bomb' | 'bird';
+export type ObstacleType = 'asteroid' | 'debris' | 'drone' | 'anomaly' | 'mine' | 'bomb' | 'bird' | 'crate';
 
 export interface Obstacle extends GameEntity {
   type: ObstacleType;
@@ -181,8 +181,8 @@ export interface GameState {
   introActive: boolean;
   introFade: number;
   introDialogueLine: string | null;
-  /** 0 = low over Earth surface, 1 = escaped to near-space (camera + planet use this) */
-  introLaunchProgress: number;
+  /** 0-1 overall intro progress (used by renderer for camera/Earth motion) */
+  introProgress: number;
   
   activeEffects: {
     slowMotion: boolean;

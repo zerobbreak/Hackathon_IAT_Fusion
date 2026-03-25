@@ -81,7 +81,7 @@ function createInitialState(): GameState {
     introActive: true,
     introFade: 1,
     introDialogueLine: null as string | null,
-    introLaunchProgress: 0,
+    introProgress: 0,
     
     activeEffects: {
       slowMotion: false,
@@ -178,10 +178,10 @@ export class GameEngine {
     this.state.introActive = true;
     this.state.introFade = 1;
     this.state.introDialogueLine = null;
-    this.state.introLaunchProgress = 0;
-    this.state.player.position.x = -6;
-    this.state.player.position.z = -14;
-    this.state.player.position.y = -3.1;
+    this.state.introProgress = 0;
+    this.state.player.position.x = -4;
+    this.state.player.position.y = -1;
+    this.state.player.position.z = 2;
     this.state.player.targetX = 0;
     this.state.player.targetY = 0;
     this.callbacks.onScoreUpdate?.(0);
@@ -198,29 +198,24 @@ export class GameEngine {
     const totalDialogueFrames = EARTH_INTRO_DIALOGUES.length * INTRO_LINE_FRAMES;
     const introEndFrame = dialogueStart + totalDialogueFrames;
 
-    // 0 = skimming surface, 1 = leaving atmosphere (drives camera + planet in render)
-    const launchT = Math.min(1, this.introFrame / Math.max(1, introEndFrame - 1));
-    const launchEase = 1 - Math.pow(1 - launchT, 2.2);
-    this.state.introLaunchProgress = launchEase;
-
     this.state.introFade = Math.max(0, 1 - Math.min(1, this.introFrame / INTRO_FADE_FRAMES));
-
-    const surfaceY = -3.15;
-    const cruiseY = 0;
-    const shipAltitudeY = surfaceY + (cruiseY - surfaceY) * launchEase;
+    this.state.introProgress = Math.min(1, this.introFrame / introEndFrame);
 
     if (this.introFrame < shipStart) {
-      this.state.player.position.x = -6;
-      this.state.player.position.z = -14;
+      this.state.player.position.x = -4;
+      this.state.player.position.y = -1;
+      this.state.player.position.z = 2;
       this.state.introDialogueLine = null;
     } else if (this.introFrame < shipEnd) {
       const t = (this.introFrame - shipStart) / INTRO_SHIP_FRAMES;
       const e = 1 - Math.pow(1 - t, 3);
-      this.state.player.position.x = -6 + 6 * e;
-      this.state.player.position.z = -14 + 14 * e;
+      this.state.player.position.x = -4 + 4 * e;
+      this.state.player.position.y = -1 + 1 * e;
+      this.state.player.position.z = 2 - 2 * e;
       this.state.introDialogueLine = null;
     } else if (this.introFrame < introEndFrame) {
       this.state.player.position.x = 0;
+      this.state.player.position.y = 0;
       this.state.player.position.z = 0;
       const d = this.introFrame - dialogueStart;
       const lineIdx = Math.min(EARTH_INTRO_DIALOGUES.length - 1, Math.floor(d / INTRO_LINE_FRAMES));
@@ -229,17 +224,17 @@ export class GameEngine {
       this.state.introActive = false;
       this.state.introFade = 0;
       this.state.introDialogueLine = null;
-      this.state.introLaunchProgress = 1;
+      this.state.introProgress = 1;
       this.state.player.position.x = 0;
-      this.state.player.position.z = 0;
       this.state.player.position.y = 0;
+      this.state.player.position.z = 0;
       this.state.spawnTimer = 0;
       this.state.powerUpSpawnTimer = 0;
       return;
     }
 
-    this.state.player.position.y = shipAltitudeY;
     this.state.player.rotation.z = (this.state.player.targetX - this.state.player.position.x) * -0.12;
+    this.state.player.rotation.x = Math.min(0.15, (1 - this.state.introProgress) * 0.22);
     this.introFrame++;
   }
 
@@ -442,6 +437,11 @@ export class GameEngine {
       damage = Math.ceil(22 * damageMult);
       vz = this.state.gameSpeed * 0.052 * levelConfig.enemySpeedMultiplier;
       motionSeed = Math.random() * Math.PI * 2;
+    } else if (type === 'crate') {
+      health = Math.ceil(2 * healthMult);
+      damage = Math.ceil(25 * damageMult);
+      vz = this.state.gameSpeed * 0.032 * levelConfig.enemySpeedMultiplier;
+      vx = (Math.random() - 0.5) * 0.03;
     }
 
     const scale =
@@ -451,7 +451,9 @@ export class GameEngine {
           ? 1.05 + Math.random() * 0.15
           : type === 'bird'
             ? 0.75 + Math.random() * 0.15
-            : 1;
+            : type === 'crate'
+              ? 1.0 + Math.random() * 0.4
+              : 1;
 
     const rotSpeed =
       type === 'asteroid'
@@ -468,11 +470,17 @@ export class GameEngine {
             }
           : type === 'bird'
             ? { x: 0, y: 0.12 + Math.random() * 0.08, z: 0 }
-            : {
-                x: (Math.random() - 0.5) * 0.05,
-                y: (Math.random() - 0.5) * 0.05,
-                z: (Math.random() - 0.5) * 0.03,
-              };
+            : type === 'crate'
+              ? {
+                  x: (Math.random() - 0.5) * 0.02,
+                  y: (Math.random() - 0.5) * 0.04,
+                  z: (Math.random() - 0.5) * 0.02,
+                }
+              : {
+                  x: (Math.random() - 0.5) * 0.05,
+                  y: (Math.random() - 0.5) * 0.05,
+                  z: (Math.random() - 0.5) * 0.03,
+                };
 
     const obstacle: Obstacle = {
       id: generateId(),
@@ -508,38 +516,38 @@ export class GameEngine {
     let duration = 0;
     let value = 0;
 
-    if (typeRand < 0.12) {
+    if (typeRand < 0.18) {
       type = 'shield';
-      value = 30;
-    } else if (typeRand < 0.22) {
+      value = 38;
+    } else if (typeRand < 0.36) {
       type = 'health';
-      value = 25;
-    } else if (typeRand < 0.32) {
+      value = 32;
+    } else if (typeRand < 0.44) {
       type = 'speed_boost';
       duration = 300;
-    } else if (typeRand < 0.42) {
+    } else if (typeRand < 0.52) {
       type = 'slow_motion';
       duration = 240;
-    } else if (typeRand < 0.52) {
+    } else if (typeRand < 0.60) {
       type = 'weapon_upgrade';
       duration = 360;
-    } else if (typeRand < 0.60) {
+    } else if (typeRand < 0.67) {
       type = 'score_multiplier';
       duration = 300;
       value = 2;
-    } else if (typeRand < 0.68) {
+    } else if (typeRand < 0.73) {
       type = 'magnet';
       duration = 400;
-    } else if (typeRand < 0.76) {
+    } else if (typeRand < 0.79) {
       type = 'nuke';
       value = 999;
-    } else if (typeRand < 0.84) {
+    } else if (typeRand < 0.85) {
       type = 'laser_beam';
       duration = 240;
     } else if (typeRand < 0.90) {
       type = 'ghost_mode';
       duration = 300;
-    } else if (typeRand < 0.96) {
+    } else if (typeRand < 0.95) {
       type = 'homing_missiles';
       duration = 360;
     } else {
@@ -683,7 +691,7 @@ export class GameEngine {
   private fireHomingMissile() {
     if (this.state.projectiles.length >= this.config.maxProjectiles) return;
     
-    const { player } = this.state;
+    const { player, boss, bossActive } = this.state;
     let nearestObstacle: Obstacle | null = null;
     let nearestDist = Infinity;
 
@@ -711,6 +719,11 @@ export class GameEngine {
     if (nearestObstacle) {
       const dx = nearestObstacle.position.x - player.position.x;
       const dy = nearestObstacle.position.y - player.position.y;
+      projectile.velocity.x = dx * 0.03;
+      projectile.velocity.y = dy * 0.03;
+    } else if (bossActive && boss && boss.active && boss.position.z < player.position.z) {
+      const dx = boss.position.x - player.position.x;
+      const dy = boss.position.y - player.position.y;
       projectile.velocity.x = dx * 0.03;
       projectile.velocity.y = dy * 0.03;
     }
@@ -878,24 +891,7 @@ export class GameEngine {
       boss.attackTimer = 30;
     }
     
-    // Check projectile collisions with boss
-    this.state.projectiles.forEach(proj => {
-      if (proj.isEnemy || !boss.active) return;
-      
-      const dx = Math.abs(proj.position.x - boss.position.x);
-      const dy = Math.abs(proj.position.y - boss.position.y);
-      const dz = Math.abs(proj.position.z - boss.position.z);
-      
-      if (dx < boss.size && dy < boss.size && dz < boss.size) {
-        proj.lifetime = 0;
-        boss.health -= proj.damage * 10;
-        boss.hitFlash = 10;
-        
-        if (boss.health <= 0) {
-          this.defeatBoss();
-        }
-      }
-    });
+    // Player projectile vs boss is handled after projectiles move (see update loop)
     
     // Laser beam damages boss
     if (this.state.activeEffects.laserBeam) {
@@ -1164,10 +1160,10 @@ export class GameEngine {
       player.targetX = Math.min(PLAY_AREA_WIDTH, player.targetX + 0.18);
     }
     if (inputManager.isMovingUp()) {
-      player.targetY = Math.max(-PLAY_AREA_HEIGHT, player.targetY - 0.12);
+      player.targetY = Math.min(PLAY_AREA_HEIGHT, player.targetY + 0.12);
     }
     if (inputManager.isMovingDown()) {
-      player.targetY = Math.min(PLAY_AREA_HEIGHT, player.targetY + 0.12);
+      player.targetY = Math.max(-PLAY_AREA_HEIGHT, player.targetY - 0.12);
     }
 
     player.position.x += (player.targetX - player.position.x) * 0.15;
@@ -1265,6 +1261,9 @@ export class GameEngine {
     if (this.state.powerUpSpawnTimer >= powerUpRate) {
       this.state.powerUpSpawnTimer = 0;
       this.spawnPowerUp();
+      if (Math.random() < 0.38) {
+        this.spawnPowerUp();
+      }
     }
 
     const baseSpeedZ = this.state.gameSpeed * 0.04 * timeScale;
@@ -1366,6 +1365,23 @@ export class GameEngine {
             }
           }
         });
+
+        // Boss: must run after projectile movement (same timing as obstacle hits)
+        const boss = this.state.boss;
+        if (this.state.bossActive && boss && boss.active && proj.lifetime > 0) {
+          const dx = Math.abs(proj.position.x - boss.position.x);
+          const dy = Math.abs(proj.position.y - boss.position.y);
+          const dz = Math.abs(proj.position.z - boss.position.z);
+          const zDepth = Math.max(boss.size * 1.2, 2.5);
+          if (dx < boss.size && dy < boss.size && dz < zDepth) {
+            proj.lifetime = 0;
+            boss.health -= proj.damage * 10;
+            boss.hitFlash = 10;
+            if (boss.health <= 0) {
+              this.defeatBoss();
+            }
+          }
+        }
       } else {
         const dx = Math.abs(proj.position.x - player.position.x);
         const dy = Math.abs(proj.position.y - player.position.y);
@@ -1445,6 +1461,7 @@ export class GameEngine {
       case 'anomaly': return 100;
       case 'bomb': return 35;
       case 'bird': return 40;
+      case 'crate': return 35;
       default: return 20;
     }
   }

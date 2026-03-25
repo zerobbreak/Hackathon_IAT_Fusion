@@ -18,8 +18,8 @@ type PowerUpType =
   | 'size_reduction';
 
 const POWER_UP_NAMES: Record<PowerUpType, string> = {
-  shield: 'SHIELD BOOST',
-  health: 'HULL REPAIR',
+  shield: 'FUEL CELL',
+  health: 'OXYGEN CANISTER',
   speed_boost: 'AFTERBURNER',
   slow_motion: 'TIME DILATION',
   weapon_upgrade: 'WEAPON OVERCHARGE',
@@ -33,8 +33,8 @@ const POWER_UP_NAMES: Record<PowerUpType, string> = {
 };
 
 const POWER_UP_COLORS: Record<PowerUpType, string> = {
-  shield: '#4488ff',
-  health: '#44ff44',
+  shield: '#ff9a1a',
+  health: '#2af0d0',
   speed_boost: '#ffaa00',
   slow_motion: '#aa44ff',
   weapon_upgrade: '#ff4444',
@@ -48,8 +48,8 @@ const POWER_UP_COLORS: Record<PowerUpType, string> = {
 };
 
 const POWER_UP_DESCRIPTIONS: Record<PowerUpType, string> = {
-  shield: 'Generates a protective energy barrier that absorbs incoming damage before affecting your hull.',
-  health: 'Repairs your spacecraft hull, restoring lost hit points to keep you in the fight.',
+  shield: 'Refills reactor fuel reserves, restoring your ship\'s energy shield that absorbs hits before your hull takes damage.',
+  health: 'Replenishes life-support oxygen, repairing cabin pressure and restoring hull integrity.',
   speed_boost: 'Activates afterburners for a temporary speed increase. Great for escaping danger.',
   slow_motion: 'Dilates time around your ship, slowing enemies and projectiles for precision dodging.',
   weapon_upgrade: 'Overcharges your weapons, increasing fire rate and enabling triple-shot mode.',
@@ -96,6 +96,7 @@ export default function App() {
   const [bossAlert, setBossAlert] = useState<string | null>(null);
   const [bossDefeated, setBossDefeated] = useState<{ name: string; points: number } | null>(null);
   const [, setGameCompleted] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [ghostInfo, setGhostInfo] = useState<GhostRunInfo | null>(() => {
     try {
       const saved = localStorage.getItem('spaceGame_ghostRun');
@@ -184,6 +185,31 @@ export default function App() {
     setTimeout(() => setBossDefeated(null), 4000);
   }, []);
 
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().then(() => {
+        setIsFullscreen(true);
+      }).catch((err) => {
+        console.error('Error attempting to enable fullscreen:', err);
+      });
+    } else {
+      document.exitFullscreen().then(() => {
+        setIsFullscreen(false);
+      }).catch((err) => {
+        console.error('Error attempting to exit fullscreen:', err);
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
@@ -193,10 +219,13 @@ export default function App() {
           setScreen('playing');
         }
       }
+      if (e.key === 'f' || e.key === 'F') {
+        toggleFullscreen();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [screen]);
+  }, [screen, toggleFullscreen]);
 
   const healthPercent = Math.max(0, health);
   const shieldPercent = Math.max(0, shield);
@@ -205,6 +234,21 @@ export default function App() {
   return (
     <div className="app">
       <div className="scanlines" />
+      <button 
+        className="fullscreen-btn" 
+        onClick={toggleFullscreen}
+        title={isFullscreen ? "Exit Fullscreen (F)" : "Enter Fullscreen (F)"}
+      >
+        {isFullscreen ? (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+          </svg>
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+          </svg>
+        )}
+      </button>
       <div className="game-shell">
         {screen === 'title' && (
           <div className="overlay-screen title-screen">
@@ -215,38 +259,42 @@ export default function App() {
               <div className="title-tagline">Navigate the cosmic storm</div>
             </div>
             
-            {highScore > 0 && (
-              <div className="high-score-display">
-                <span className="hs-label">BEST SCORE</span>
-                <span className="hs-value">{highScore.toLocaleString()}</span>
-              </div>
-            )}
-
-            {ghostInfo && (
-              <div className="ghost-info-panel">
-                <div className="ghost-header">
-                  <span className="ghost-icon">👻</span>
-                  <span className="ghost-title">SHADOW RUN</span>
+            <div className="title-info-row">
+              {highScore > 0 && (
+                <div className="high-score-display">
+                  <span className="hs-label">BEST SCORE</span>
+                  <span className="hs-value">{highScore.toLocaleString()}</span>
                 </div>
-                <div className="ghost-stats">
-                  <span>Best Distance: {Math.floor(ghostInfo.finalDistance)}m</span>
-                  {ghostInfo.completedGame && <span className="ghost-completed">GAME COMPLETED!</span>}
-                </div>
-                <div className="ghost-hint">Race against your best run</div>
-              </div>
-            )}
+              )}
 
-            <button className="cta-btn" onClick={handleStart}>
-              <span className="btn-text">LAUNCH</span>
-              <span className="btn-glow" />
-            </button>
-            
-            <button className="secondary-btn powerups-btn" onClick={() => setScreen('powerups')}>
-              POWER-UPS GUIDE
-            </button>
+              {ghostInfo && (
+                <div className="ghost-info-panel">
+                  <div className="ghost-header">
+                    <span className="ghost-icon">👻</span>
+                    <span className="ghost-title">SHADOW RUN</span>
+                  </div>
+                  <div className="ghost-stats">
+                    <span>Best Distance: {Math.floor(ghostInfo.finalDistance)}m</span>
+                    {ghostInfo.completedGame && <span className="ghost-completed">COMPLETED!</span>}
+                  </div>
+                  <div className="ghost-hint">Race against your best run</div>
+                </div>
+              )}
+            </div>
+
+            <div className="title-actions">
+              <button className="cta-btn" onClick={handleStart}>
+                <span className="btn-text">LAUNCH MISSION</span>
+                <span className="btn-glow" />
+              </button>
+              
+              <button className="secondary-btn powerups-btn" onClick={() => setScreen('powerups')}>
+                POWER-UPS GUIDE
+              </button>
+            </div>
 
             <div className="controls-panel">
-              <h3 className="controls-title">CONTROLS</h3>
+              <h3 className="controls-title">FLIGHT CONTROLS</h3>
               <div className="controls-grid">
                 <div className="control-item">
                   <span className="key-group">
@@ -275,9 +323,15 @@ export default function App() {
                   </span>
                   <span className="control-desc">Pause</span>
                 </div>
+                <div className="control-item">
+                  <span className="key-group">
+                    <span className="kbd">F</span>
+                  </span>
+                  <span className="control-desc">Fullscreen</span>
+                </div>
               </div>
               <div className="mobile-hint">
-                <span>Touch: Tap to shoot, Swipe to move</span>
+                <span>Touch Controls: Tap to shoot • Swipe to move</span>
               </div>
             </div>
           </div>
@@ -339,8 +393,9 @@ export default function App() {
         {screen === 'gameover' && (
           <div className="overlay-screen gameover-screen">
             <div className="go-content">
+              <div className="go-icon">💥</div>
               <h2 className="go-title">SIGNAL LOST</h2>
-              <p className="go-subtitle">Vessel destroyed in sector 7-G</p>
+              <p className="go-subtitle">Vessel destroyed • Mission terminated</p>
               
               <div className="go-stats">
                 <div className="go-stat primary">
@@ -348,31 +403,34 @@ export default function App() {
                   <span className="go-value">{finalScore.toLocaleString()}</span>
                 </div>
                 <div className="go-stat">
-                  <span className="go-label">DISTANCE</span>
+                  <span className="go-label">DISTANCE TRAVELED</span>
                   <span className="go-value">{finalDistance}m</span>
                 </div>
                 <div className="go-stat">
-                  <span className="go-label">BEST SCORE</span>
+                  <span className="go-label">HIGH SCORE</span>
                   <span className="go-value highlight">{highScore.toLocaleString()}</span>
                 </div>
               </div>
 
               {ghostInfo && finalDistance < ghostInfo.finalDistance && (
                 <div className="ghost-comparison">
-                  <span>Shadow was {Math.floor(ghostInfo.finalDistance - finalDistance)}m ahead</span>
+                  Shadow was {Math.floor(ghostInfo.finalDistance - finalDistance)}m ahead
                 </div>
               )}
 
               {finalScore >= highScore && finalScore > 0 && (
-                <div className="new-record">NEW RECORD!</div>
+                <div className="new-record">NEW RECORD ACHIEVED!</div>
               )}
 
-              <button className="cta-btn" onClick={handleStart}>
-                <span className="btn-text">TRY AGAIN</span>
-              </button>
-              <button className="secondary-btn" onClick={() => setScreen('title')}>
-                MAIN MENU
-              </button>
+              <div className="end-screen-buttons">
+                <button className="cta-btn" onClick={handleStart}>
+                  <span className="btn-text">TRY AGAIN</span>
+                  <span className="btn-glow" />
+                </button>
+                <button className="secondary-btn" onClick={() => setScreen('title')}>
+                  MAIN MENU
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -412,12 +470,15 @@ export default function App() {
                 <div className="new-record victory-record">NEW HIGH SCORE!</div>
               )}
 
-              <button className="cta-btn" onClick={handleStart}>
-                <span className="btn-text">PLAY AGAIN</span>
-              </button>
-              <button className="secondary-btn" onClick={() => setScreen('title')}>
-                MAIN MENU
-              </button>
+              <div className="end-screen-buttons">
+                <button className="cta-btn" onClick={handleStart}>
+                  <span className="btn-text">PLAY AGAIN</span>
+                  <span className="btn-glow" />
+                </button>
+                <button className="secondary-btn" onClick={() => setScreen('title')}>
+                  MAIN MENU
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -453,20 +514,19 @@ export default function App() {
 
               <div className="hud-right">
                 <div className="hud-panel health-panel">
-                  <span className="hud-label">HULL</span>
+                  <span className="hud-label">OXYGEN</span>
                   <div className="bar-container">
                     <div className="bar health-bar" style={{ width: `${healthPercent}%`, backgroundColor: healthColor }} />
                   </div>
                   <span className="bar-value">{Math.round(healthPercent)}%</span>
                 </div>
-                {shieldPercent > 0 && (
-                  <div className="hud-panel shield-panel">
-                    <span className="hud-label">SHIELD</span>
-                    <div className="bar-container">
-                      <div className="bar shield-bar" style={{ width: `${shieldPercent * 2}%` }} />
-                    </div>
+                <div className="hud-panel shield-panel">
+                  <span className="hud-label">FUEL</span>
+                  <div className="bar-container">
+                    <div className="bar shield-bar" style={{ width: `${Math.min(100, shieldPercent * 2)}%` }} />
                   </div>
-                )}
+                  <span className="bar-value">{Math.round(shieldPercent)}</span>
+                </div>
                 <div className="hud-panel speed-panel">
                   <span className="hud-label">SPEED</span>
                   <span className="hud-value speed-value">{speed.toFixed(1)}</span>
