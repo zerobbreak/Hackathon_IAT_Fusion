@@ -1053,3 +1053,54 @@ body {
   from { box-shadow: 0 0 10px #44ff88; }
   to { box-shadow: 0 0 30px #44ff88; }
 }
+
+/* Level 1 Earth intro — mission link overlay */
+.mission-intro-black {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: #000;
+  transition: opacity 0.05s linear;
+}
+
+.mission-intro-dialogue {
+  position: absolute;
+  left: 50%;
+  bottom: 14%;
+  transform: translateX(-50%);
+  z-index: 6;
+  max-width: min(90vw, 36rem);
+  text-align: center;
+  pointer-events: none;
+  animation: missionLineIn 0.45s ease-out;
+}
+
+.mission-intro-label {
+  display: block;
+  font-size: 0.65rem;
+  letter-spacing: 0.35em;
+  color: rgba(0, 255, 200, 0.55);
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.mission-intro-text {
+  font-size: clamp(0.85rem, 2.2vw, 1.05rem);
+  line-height: 1.45;
+  color: rgba(220, 228, 240, 0.95);
+  text-shadow: 0 0 20px rgba(0, 40, 60, 0.9);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+@keyframes missionLineIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}

@@ -77,6 +77,11 @@ function createInitialState(): GameState {
     levelTransitionTimer: 0,
     bossActive: false,
     boss: null,
+
+    introActive: true,
+    introFade: 1,
+    introDialogueLine: null as string | null,
+    introLaunchProgress: 0,
     
     activeEffects: {
       slowMotion: false,
@@ -100,11 +105,23 @@ function createInitialState(): GameState {
   };
 }
 
+const INTRO_FADE_FRAMES = 90;
+const INTRO_SHIP_FRAMES = 120;
+const INTRO_LINE_FRAMES = 70;
+const EARTH_INTRO_DIALOGUES = [
+  'Simulation Link Established…',
+  'Pilot, you are approaching Sector Earth-01.',
+  'Atmospheric debris detected.',
+  'Warning: hostile aerial objects incoming.',
+  'Objective: survive and navigate through the danger zone.',
+];
+
 export class GameEngine {
   private state: GameState;
   private config: GameConfig;
   private shootCooldown = 0;
   private currentLevelConfig: LevelConfig = LEVELS[0];
+  private introFrame = 0;
   
   // Ghost replay system
   private ghostFrames: GhostFrame[] = [];
@@ -157,11 +174,73 @@ export class GameEngine {
     this.ghostFrames = [];
     this.ghostFrameIndex = 0;
     this.currentLevelConfig = LEVELS[0];
+    this.introFrame = 0;
+    this.state.introActive = true;
+    this.state.introFade = 1;
+    this.state.introDialogueLine = null;
+    this.state.introLaunchProgress = 0;
+    this.state.player.position.x = -6;
+    this.state.player.position.z = -14;
+    this.state.player.position.y = -3.1;
+    this.state.player.targetX = 0;
+    this.state.player.targetY = 0;
     this.callbacks.onScoreUpdate?.(0);
     this.callbacks.onHealthUpdate?.(100, 0);
     this.callbacks.onDistanceUpdate?.(0);
     this.callbacks.onMultiplierUpdate?.(1);
     this.callbacks.onSpeedUpdate?.(this.state.gameSpeed);
+  }
+
+  private updateIntroSequence() {
+    const shipStart = INTRO_FADE_FRAMES;
+    const shipEnd = shipStart + INTRO_SHIP_FRAMES;
+    const dialogueStart = shipEnd;
+    const totalDialogueFrames = EARTH_INTRO_DIALOGUES.length * INTRO_LINE_FRAMES;
+    const introEndFrame = dialogueStart + totalDialogueFrames;
+
+    // 0 = skimming surface, 1 = leaving atmosphere (drives camera + planet in render)
+    const launchT = Math.min(1, this.introFrame / Math.max(1, introEndFrame - 1));
+    const launchEase = 1 - Math.pow(1 - launchT, 2.2);
+    this.state.introLaunchProgress = launchEase;
+
+    this.state.introFade = Math.max(0, 1 - Math.min(1, this.introFrame / INTRO_FADE_FRAMES));
+
+    const surfaceY = -3.15;
+    const cruiseY = 0;
+    const shipAltitudeY = surfaceY + (cruiseY - surfaceY) * launchEase;
+
+    if (this.introFrame < shipStart) {
+      this.state.player.position.x = -6;
+      this.state.player.position.z = -14;
+      this.state.introDialogueLine = null;
+    } else if (this.introFrame < shipEnd) {
+      const t = (this.introFrame - shipStart) / INTRO_SHIP_FRAMES;
+      const e = 1 - Math.pow(1 - t, 3);
+      this.state.player.position.x = -6 + 6 * e;
+      this.state.player.position.z = -14 + 14 * e;
+      this.state.introDialogueLine = null;
+    } else if (this.introFrame < introEndFrame) {
+      this.state.player.position.x = 0;
+      this.state.player.position.z = 0;
+      const d = this.introFrame - dialogueStart;
+      const lineIdx = Math.min(EARTH_INTRO_DIALOGUES.length - 1, Math.floor(d / INTRO_LINE_FRAMES));
+      this.state.introDialogueLine = EARTH_INTRO_DIALOGUES[lineIdx];
+    } else {
+      this.state.introActive = false;
+      this.state.introFade = 0;
+      this.state.introDialogueLine = null;
+      this.state.introLaunchProgress = 1;
+      this.state.player.position.x = 0;
+      this.state.player.position.z = 0;
+      this.state.player.position.y = 0;
+      this.state.spawnTimer = 0;
+      this.state.powerUpSpawnTimer = 0;
+      return;
+    }
+
+    this.state.player.position.y = shipAltitudeY;
+    this.state.player.rotation.z = (this.state.player.targetX - this.state.player.position.x) * -0.12;
+    this.introFrame++;
   }
 
   private loadGhostRun() {
@@ -328,9 +407,17 @@ export class GameEngine {
     const healthMult = levelConfig.enemyHealthMultiplier;
     const damageMult = levelConfig.enemyDamageMultiplier;
 
+    let vx = 0;
+    let vy = 0;
+    let vz = this.state.gameSpeed * 0.04 * levelConfig.enemySpeedMultiplier;
+    let motionSeed: number | undefined;
+
     if (type === 'asteroid') {
       health = Math.ceil(2 * healthMult);
       damage = Math.ceil(30 * damageMult);
+      vz = this.state.gameSpeed * 0.038 * levelConfig.enemySpeedMultiplier;
+      vx = (Math.random() - 0.5) * 0.06;
+      vy = (Math.random() - 0.5) * 0.04;
     } else if (type === 'debris') {
       health = Math.ceil(1 * healthMult);
       damage = Math.ceil(15 * damageMult);
@@ -344,7 +431,48 @@ export class GameEngine {
     } else if (type === 'anomaly') {
       health = 999;
       damage = Math.ceil(50 * damageMult);
+    } else if (type === 'bomb') {
+      health = Math.ceil(1 * healthMult);
+      damage = Math.ceil(38 * damageMult);
+      vz = this.state.gameSpeed * 0.026 * levelConfig.enemySpeedMultiplier;
+      vx = (Math.random() < 0.5 ? -1 : 1) * (0.04 + Math.random() * 0.06);
+      vy = -0.02 - Math.random() * 0.04;
+    } else if (type === 'bird') {
+      health = Math.ceil(1 * healthMult);
+      damage = Math.ceil(22 * damageMult);
+      vz = this.state.gameSpeed * 0.052 * levelConfig.enemySpeedMultiplier;
+      motionSeed = Math.random() * Math.PI * 2;
     }
+
+    const scale =
+      type === 'asteroid'
+        ? 1.2 + Math.random() * 0.5
+        : type === 'bomb'
+          ? 1.05 + Math.random() * 0.15
+          : type === 'bird'
+            ? 0.75 + Math.random() * 0.15
+            : 1;
+
+    const rotSpeed =
+      type === 'asteroid'
+        ? {
+            x: (Math.random() - 0.5) * 0.08,
+            y: (Math.random() - 0.5) * 0.08,
+            z: (Math.random() - 0.5) * 0.06,
+          }
+        : type === 'bomb'
+          ? {
+              x: (Math.random() - 0.5) * 0.03,
+              y: (Math.random() - 0.5) * 0.03,
+              z: (Math.random() - 0.5) * 0.02,
+            }
+          : type === 'bird'
+            ? { x: 0, y: 0.12 + Math.random() * 0.08, z: 0 }
+            : {
+                x: (Math.random() - 0.5) * 0.05,
+                y: (Math.random() - 0.5) * 0.05,
+                z: (Math.random() - 0.5) * 0.03,
+              };
 
     const obstacle: Obstacle = {
       id: generateId(),
@@ -353,21 +481,18 @@ export class GameEngine {
         y: (Math.random() - 0.5) * PLAY_AREA_HEIGHT * 1.5, 
         z: -70 - Math.random() * 20 
       },
-      velocity: { x: 0, y: 0, z: this.state.gameSpeed * 0.04 * levelConfig.enemySpeedMultiplier },
+      velocity: { x: vx, y: vy, z: vz },
       rotation: { x: Math.random() * Math.PI, y: Math.random() * Math.PI, z: 0 },
-      scale: type === 'asteroid' ? 1.2 + Math.random() * 0.5 : 1,
+      scale,
       active: true,
       type,
       health,
       damage,
-      rotationSpeed: {
-        x: (Math.random() - 0.5) * 0.05,
-        y: (Math.random() - 0.5) * 0.05,
-        z: (Math.random() - 0.5) * 0.03,
-      },
+      rotationSpeed: rotSpeed,
       hitFlash: 0,
       shootTimer: behavior === 'shoot' ? Math.floor(Math.random() * 60) + 30 : undefined,
       behavior,
+      motionSeed,
     };
 
     this.state.obstacles.push(obstacle);
@@ -1013,6 +1138,12 @@ export class GameEngine {
   update() {
     if (this.state.isPaused || this.state.isGameOver) return;
 
+    if (this.state.introActive) {
+      this.updateIntroSequence();
+      this.state.frameCount++;
+      return;
+    }
+
     const { player, activeEffects, effectTimers } = this.state;
     const input = inputManager.getState();
     const timeScale = activeEffects.slowMotion ? 0.5 : 1;
@@ -1114,9 +1245,13 @@ export class GameEngine {
 
     audioManager.setEngineSpeed(this.state.gameSpeed);
 
-    // Use level-specific spawn rate
+    // Use level-specific spawn rate (Level 1: gentler spawn ramp after intro)
     const levelSpawnRate = this.currentLevelConfig.spawnRate;
-    const spawnRate = Math.max(15, levelSpawnRate - this.state.difficulty * 5);
+    const level1Ease =
+      this.currentLevelConfig.id === 1 && this.state.distance < 160
+        ? 1.15 + (1 - this.state.distance / 160) * 0.35
+        : 1;
+    const spawnRate = Math.max(15, levelSpawnRate * level1Ease - this.state.difficulty * 5);
     this.state.spawnTimer++;
     if (this.state.spawnTimer >= spawnRate && !this.state.bossActive) {
       this.state.spawnTimer = 0;
@@ -1139,6 +1274,22 @@ export class GameEngine {
       o.rotation.x += o.rotationSpeed.x;
       o.rotation.y += o.rotationSpeed.y;
       o.rotation.z += o.rotationSpeed.z;
+
+      if (o.type === 'bomb') {
+        o.velocity.y -= 0.0014 * timeScale;
+        o.position.x += o.velocity.x * timeScale;
+        o.position.y += o.velocity.y * timeScale;
+        o.position.x += Math.sin(this.state.frameCount * 0.018 + o.id.length) * 0.025 * timeScale;
+      } else if (o.type === 'bird') {
+        const w = o.motionSeed ?? 0;
+        o.position.x += Math.sin(this.state.frameCount * 0.33 + w) * 0.14 * timeScale;
+        o.position.y += Math.cos(this.state.frameCount * 0.29 + w * 1.7) * 0.11 * timeScale;
+        o.position.x += (Math.random() - 0.5) * 0.06 * timeScale;
+        o.position.y += (Math.random() - 0.5) * 0.05 * timeScale;
+      } else if (o.type === 'asteroid') {
+        o.position.x += Math.sin(this.state.frameCount * 0.014 + o.id.charCodeAt(0)) * 0.018 * timeScale;
+        o.position.y += Math.cos(this.state.frameCount * 0.011) * 0.012 * timeScale;
+      }
 
       if (o.behavior === 'chase') {
         const dx = player.position.x - o.position.x;
@@ -1239,7 +1390,9 @@ export class GameEngine {
       
       // Size reduction makes hitbox smaller
       const playerRadius = activeEffects.sizeReduction ? 0.4 : 0.8;
-      const collisionRadius = (obs.type === 'asteroid' ? 1.3 : 1) + playerRadius;
+      const collisionRadius =
+        (obs.type === 'asteroid' ? 1.3 : obs.type === 'bomb' ? 1.15 : obs.type === 'bird' ? 0.75 : 1) +
+        playerRadius;
 
       if (dx < collisionRadius && dy < collisionRadius && dz < 1.2) {
         obs.health = 0;
@@ -1290,6 +1443,8 @@ export class GameEngine {
       case 'drone': return 50;
       case 'mine': return 25;
       case 'anomaly': return 100;
+      case 'bomb': return 35;
+      case 'bird': return 40;
       default: return 20;
     }
   }

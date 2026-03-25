@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { GameEngine } from './GameEngine';
+import type { LevelConfig } from './levels';
 import { GameState, Star, Nebula, Planet } from './types';
 
 const MAX_STARS = 700;
@@ -11,8 +12,8 @@ const MAX_PARTICLES = 120;
 const MAX_POWERUPS = 8;
 const MAX_EXPLOSIONS = 20;
 
-function generateStars(count: number): Star[] {
-  const colors = ['#ffffff', '#aaccff', '#ffddaa', '#ffaaaa', '#aaffaa'];
+function generateStars(count: number, palette: string[]): Star[] {
+  const colors = palette.length ? palette : ['#ffffff', '#aaccff', '#ffddaa', '#ffaaaa', '#aaffaa'];
   return Array.from({ length: count }, () => ({
     x: (Math.random() - 0.5) * 300,
     y: (Math.random() - 0.5) * 150,
@@ -49,9 +50,19 @@ function generatePlanets(): Planet[] {
   }));
 }
 
-function Starfield({ gameSpeed }: { gameSpeed: number }) {
+function Starfield({
+  gameSpeed,
+  starColors,
+  engine,
+}: {
+  gameSpeed: number;
+  starColors: string[];
+  /** When set (Earth), stars fade in as you leave the atmosphere */
+  engine?: GameEngine;
+}) {
   const pointsRef = useRef<THREE.Points>(null);
-  const stars = useMemo(() => generateStars(MAX_STARS), []);
+  const starKey = starColors.join(',');
+  const stars = useMemo(() => generateStars(MAX_STARS, starColors), [starKey, starColors]);
   
   const [positions, colors, sizes] = useMemo(() => {
     const pos = new Float32Array(stars.length * 3);
@@ -77,9 +88,16 @@ function Starfield({ gameSpeed }: { gameSpeed: number }) {
     if (!pointsRef.current) return;
     const posAttr = pointsRef.current.geometry.attributes.position as THREE.BufferAttribute;
     const array = posAttr.array as Float32Array;
+    const mat = pointsRef.current.material as THREE.PointsMaterial;
+    if (engine) {
+      const p = engine.getState().introLaunchProgress;
+      mat.opacity = 0.1 + 0.82 * p;
+    } else {
+      mat.opacity = 0.9;
+    }
     
     for (let i = 0; i < stars.length; i++) {
-      array[i * 3 + 2] += gameSpeed * 0.025;
+      array[i * 3 + 2] += gameSpeed * 0.028;
       if (array[i * 3 + 2] > 60) {
         array[i * 3 + 2] = -150;
         array[i * 3] = (Math.random() - 0.5) * 300;
@@ -101,7 +119,7 @@ function Starfield({ gameSpeed }: { gameSpeed: number }) {
   );
 }
 
-function Nebulae() {
+function Nebulae({ colors }: { colors: string[] }) {
   const nebulae = useMemo(() => generateNebulae(), []);
   
   return (
@@ -109,11 +127,315 @@ function Nebulae() {
       {nebulae.map((nebula, i) => (
         <mesh key={i} position={[nebula.x, nebula.y, nebula.z]} rotation={[0, 0, nebula.rotation]}>
           <planeGeometry args={[nebula.size, nebula.size]} />
-          <meshBasicMaterial color={nebula.color} transparent opacity={nebula.opacity} side={THREE.DoubleSide} />
+          <meshBasicMaterial color={colors[i % colors.length] || nebula.color} transparent opacity={nebula.opacity} side={THREE.DoubleSide} />
         </mesh>
       ))}
     </group>
   );
+}
+
+function useEarthTexture() {
+  return useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const g = ctx.createLinearGradient(0, 0, 0, 512);
+    g.addColorStop(0, '#1a2835');
+    g.addColorStop(0.45, '#1e2d3a');
+    g.addColorStop(1, '#141a22');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 1024, 512);
+    for (let i = 0; i < 60; i++) {
+      ctx.fillStyle = `rgba(68, 70, 74, ${0.3 + Math.random() * 0.45})`;
+      ctx.beginPath();
+      ctx.arc(Math.random() * 1024, Math.random() * 512, 20 + Math.random() * 110, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (let i = 0; i < 35; i++) {
+      ctx.fillStyle = `rgba(82, 80, 76, ${0.2 + Math.random() * 0.35})`;
+      ctx.beginPath();
+      ctx.ellipse(
+        Math.random() * 1024,
+        Math.random() * 512,
+        35 + Math.random() * 90,
+        18 + Math.random() * 45,
+        Math.random() * Math.PI,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(28, 32, 38, 0.42)';
+    ctx.fillRect(0, 0, 1024, 512);
+    ctx.strokeStyle = 'rgba(8, 10, 12, 0.45)';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 90; i++) {
+      ctx.beginPath();
+      ctx.moveTo(Math.random() * 1024, Math.random() * 512);
+      for (let j = 0; j < 4; j++) {
+        ctx.lineTo(Math.random() * 1024, Math.random() * 512);
+      }
+      ctx.stroke();
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.needsUpdate = true;
+    return tex;
+  }, []);
+}
+
+function EarthDystopia({ engine }: { engine: GameEngine }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const tex = useEarthTexture();
+
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    const s = engine.getState();
+    const p = s.introActive ? s.introLaunchProgress : 1;
+    groupRef.current.rotation.y = clock.elapsedTime * 0.004;
+    // Start: large planet below — feels like low orbit; end: smaller, farther (escaping)
+    const y = THREE.MathUtils.lerp(-2, -24, p);
+    const z = THREE.MathUtils.lerp(-138, -228, p);
+    const sc = THREE.MathUtils.lerp(1.32, 1, p);
+    groupRef.current.position.set(0, y, z);
+    groupRef.current.scale.setScalar(sc);
+  });
+
+  if (!tex) return null;
+
+  return (
+    <group ref={groupRef}>
+      <mesh>
+        <sphereGeometry args={[62, 56, 56]} />
+        <meshStandardMaterial map={tex} roughness={0.94} metalness={0.06} />
+      </mesh>
+      <mesh scale={[1.012, 1.012, 1.012]}>
+        <sphereGeometry args={[62, 40, 40]} />
+        <meshBasicMaterial color="#2a3544" transparent opacity={0.14} side={THREE.BackSide} />
+      </mesh>
+      <mesh scale={[1.055, 1.055, 1.055]}>
+        <sphereGeometry args={[62, 28, 28]} />
+        <meshBasicMaterial
+          color="#3d4a5c"
+          transparent
+          opacity={0.22}
+          side={THREE.BackSide}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh scale={[1.002, 1.002, 1.002]}>
+        <sphereGeometry args={[62, 20, 20]} />
+        <meshBasicMaterial color="#1a1e24" wireframe transparent opacity={0.06} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
+function EarthAtmosphericHaze({ engine }: { engine: GameEngine }) {
+  const gRef = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (!gRef.current) return;
+    const p = engine.getState().introActive ? engine.getState().introLaunchProgress : 1;
+    gRef.current.position.y = THREE.MathUtils.lerp(-1.2, 1.5, p);
+    gRef.current.position.z = THREE.MathUtils.lerp(-8, -22, p);
+  });
+  return (
+    <group ref={gRef}>
+      {[0, 1, 2, 3].map((i) => (
+        <mesh key={i} position={[0, 2 - i * 1.2, -28 - i * 32]} rotation={[0.08 * i, 0.04 * i, 0]}>
+          <planeGeometry args={[220, 120]} />
+          <meshBasicMaterial color="#252a32" transparent opacity={0.035 + i * 0.018} depthWrite={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function EarthSmogParticles({ gameSpeed }: { gameSpeed: number }) {
+  const ref = useRef<THREE.Points>(null);
+  const n = 180;
+  const positions = useMemo(() => {
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      pos[i * 3] = (Math.random() - 0.5) * 140;
+      pos[i * 3 + 1] = (Math.random() - 0.5) * 80;
+      pos[i * 3 + 2] = -40 - Math.random() * 120;
+    }
+    return pos;
+  }, []);
+
+  useFrame(() => {
+    if (!ref.current) return;
+    const arr = (ref.current.geometry.attributes.position.array as Float32Array);
+    for (let i = 0; i < n; i++) {
+      arr[i * 3 + 2] += gameSpeed * 0.018 + 0.04;
+      arr[i * 3] += Math.sin(Date.now() * 0.001 + i) * 0.02;
+      if (arr[i * 3 + 2] > 25) {
+        arr[i * 3 + 2] = -160;
+        arr[i * 3] = (Math.random() - 0.5) * 140;
+        arr[i * 3 + 1] = (Math.random() - 0.5) * 80;
+      }
+    }
+    ref.current.geometry.attributes.position.needsUpdate = true;
+  });
+
+  return (
+    <points ref={ref}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" count={n} array={positions} itemSize={3} />
+      </bufferGeometry>
+      <pointsMaterial
+        size={0.45}
+        color="#6a7078"
+        transparent
+        opacity={0.35}
+        sizeAttenuation
+        depthWrite={false}
+      />
+    </points>
+  );
+}
+
+function EarthSmogNebulae({ engine, gameSpeed }: { engine: GameEngine; gameSpeed: number }) {
+  const smog = useMemo(
+    () =>
+      Array.from({ length: 10 }, (_, i) => ({
+        x: (Math.random() - 0.5) * 100,
+        y: (Math.random() - 0.5) * 50,
+        z: -55 - i * 14,
+        size: 38 + Math.random() * 55,
+        opacity: 0.04 + Math.random() * 0.06,
+        rot: Math.random() * Math.PI * 2,
+        seed: Math.random() * 1000,
+      })),
+    []
+  );
+  const groupRef = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!groupRef.current) return;
+    const p = engine.getState().introActive ? engine.getState().introLaunchProgress : 1;
+    groupRef.current.position.z = THREE.MathUtils.lerp(4, -6, p);
+    groupRef.current.position.y = THREE.MathUtils.lerp(-1.5, 0.8, p);
+    groupRef.current.children.forEach((ch, i) => {
+      const s = smog[i];
+      if (!s) return;
+      ch.position.z += gameSpeed * 0.012 + 0.05;
+      if (ch.position.z > 20) ch.position.z = -120;
+      ch.rotation.z = s.rot + clock.elapsedTime * 0.02 * (i % 2 + 1);
+    });
+  });
+  return (
+    <group ref={groupRef}>
+      {smog.map((s, i) => (
+        <mesh key={i} position={[s.x, s.y, s.z]} rotation={[0.1, 0, s.rot]}>
+          <planeGeometry args={[s.size, s.size * 0.55]} />
+          <meshBasicMaterial color="#3a3e48" transparent opacity={s.opacity} side={THREE.DoubleSide} depthWrite={false} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function EarthCloudLayers({ engine, gameSpeed }: { engine: GameEngine; gameSpeed: number }) {
+  const layers = useMemo(
+    () =>
+      Array.from({ length: 14 }, (_, i) => ({
+        x: (Math.random() - 0.5) * 160,
+        y: -8 + Math.random() * 28,
+        z: -35 - i * 18,
+        w: 70 + Math.random() * 100,
+        h: 35 + Math.random() * 50,
+        op: 0.06 + Math.random() * 0.08,
+        phase: Math.random() * Math.PI * 2,
+      })),
+    []
+  );
+  const ref = useRef<THREE.Group>(null);
+  useFrame(({ clock }) => {
+    if (!ref.current) return;
+    const p = engine.getState().introActive ? engine.getState().introLaunchProgress : 1;
+    ref.current.position.y = THREE.MathUtils.lerp(-4, -1, p);
+    ref.current.children.forEach((mesh, i) => {
+      const L = layers[i];
+      if (!L) return;
+      mesh.position.x += Math.sin(clock.elapsedTime * 0.15 + L.phase) * 0.02;
+      mesh.position.z += gameSpeed * 0.022 + 0.06;
+      if (mesh.position.z > 15) mesh.position.z = -140;
+    });
+  });
+  return (
+    <group ref={ref}>
+      {layers.map((L, i) => (
+        <mesh key={i} position={[L.x, L.y, L.z]} rotation={[-0.12, 0.02, 0.05]}>
+          <planeGeometry args={[L.w, L.h]} />
+          <meshBasicMaterial
+            color="#4a5058"
+            transparent
+            opacity={L.op}
+            side={THREE.DoubleSide}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function EarthLaunchCameraFog({
+  engine,
+  active,
+  fogColor,
+  fogNearBase,
+  fogFarBase,
+}: {
+  engine: GameEngine;
+  active: boolean;
+  fogColor: string;
+  fogNearBase: number;
+  fogFarBase: number;
+}) {
+  const { camera, scene } = useThree();
+  const look = useMemo(() => new THREE.Vector3(), []);
+
+  useFrame(() => {
+    if (!active) {
+      camera.position.set(0, 6, 16);
+      camera.lookAt(0, 0, -40);
+      if (scene.fog instanceof THREE.Fog) {
+        scene.fog.color.set(fogColor);
+        scene.fog.near = fogNearBase;
+        scene.fog.far = fogFarBase;
+      }
+      return;
+    }
+
+    const s = engine.getState();
+    const p = s.introLaunchProgress;
+    const intro = s.introActive;
+
+    const camY = THREE.MathUtils.lerp(2.85, 6, p);
+    const camZ = THREE.MathUtils.lerp(9.8, 16, p);
+    const sway = intro ? Math.sin(s.frameCount * 0.085) * 0.1 * (1 - p) : 0;
+    const roll = intro ? Math.sin(s.frameCount * 0.06) * 0.02 * (1 - p) : 0;
+
+    camera.position.set(sway, camY, camZ);
+    camera.rotation.z = roll;
+
+    const lookY = THREE.MathUtils.lerp(0.55, 0, p);
+    const lookZ = THREE.MathUtils.lerp(-32, -48, p);
+    look.set(0, lookY, lookZ);
+    camera.lookAt(look);
+
+    if (scene.fog instanceof THREE.Fog) {
+      scene.fog.color.set(fogColor);
+      scene.fog.near = THREE.MathUtils.lerp(22, fogNearBase, p);
+      scene.fog.far = THREE.MathUtils.lerp(72, fogFarBase, p);
+    }
+  });
+
+  return null;
 }
 
 function Planets() {
@@ -372,6 +694,8 @@ function InstancedObstacles({ state }: { state: GameState }) {
   const droneRef = useRef<THREE.InstancedMesh>(null);
   const mineRef = useRef<THREE.InstancedMesh>(null);
   const anomalyRef = useRef<THREE.InstancedMesh>(null);
+  const bombRef = useRef<THREE.InstancedMesh>(null);
+  const birdRef = useRef<THREE.InstancedMesh>(null);
 
   const tempMatrix = useMemo(() => new THREE.Matrix4(), []);
   const tempColor = useMemo(() => new THREE.Color(), []);
@@ -381,9 +705,30 @@ function InstancedObstacles({ state }: { state: GameState }) {
   const droneMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#D85A30', emissive: '#331100', emissiveIntensity: 0.3 }), []);
   const mineMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#E24B4A', emissive: '#440000', emissiveIntensity: 0.5 }), []);
   const anomalyMat = useMemo(() => new THREE.MeshBasicMaterial({ color: '#9933ff', transparent: true, opacity: 0.7 }), []);
+  const bombMat = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: '#2a2a30',
+        emissive: '#331100',
+        emissiveIntensity: 0.35,
+        roughness: 0.55,
+        metalness: 0.7,
+      }),
+    []
+  );
+  const birdMat = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: '#4a4a52',
+        emissive: '#222228',
+        emissiveIntensity: 0.15,
+        roughness: 0.85,
+      }),
+    []
+  );
 
   useFrame(() => {
-    const counts = { asteroid: 0, debris: 0, drone: 0, mine: 0, anomaly: 0 };
+    const counts = { asteroid: 0, debris: 0, drone: 0, mine: 0, anomaly: 0, bomb: 0, bird: 0 };
 
     state.obstacles.forEach(o => {
       if (o.health <= 0) return;
@@ -436,20 +781,42 @@ function InstancedObstacles({ state }: { state: GameState }) {
             counts.anomaly++;
           }
           break;
+        case 'bomb':
+          if (bombRef.current && counts.bomb < MAX_OBSTACLES) {
+            bombRef.current.setMatrixAt(counts.bomb, tempMatrix);
+            tempColor.set(flashColor || '#3a3a42');
+            bombRef.current.setColorAt(counts.bomb, tempColor);
+            counts.bomb++;
+          }
+          break;
+        case 'bird':
+          if (birdRef.current && counts.bird < MAX_OBSTACLES) {
+            birdRef.current.setMatrixAt(counts.bird, tempMatrix);
+            tempColor.set(flashColor || '#5a5a62');
+            birdRef.current.setColorAt(counts.bird, tempColor);
+            counts.bird++;
+          }
+          break;
       }
     });
 
-    [asteroidRef, debrisRef, droneRef, mineRef, anomalyRef].forEach((ref, idx) => {
-      if (ref.current) {
-        const type = ['asteroid', 'debris', 'drone', 'mine', 'anomaly'][idx] as keyof typeof counts;
-        for (let i = counts[type]; i < MAX_OBSTACLES; i++) {
-          tempMatrix.makeTranslation(0, -1000, 0);
-          ref.current.setMatrixAt(i, tempMatrix);
-        }
-        ref.current.instanceMatrix.needsUpdate = true;
-        if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+    const flush = (ref: React.RefObject<THREE.InstancedMesh | null>, count: number) => {
+      if (!ref.current) return;
+      for (let i = count; i < MAX_OBSTACLES; i++) {
+        tempMatrix.makeTranslation(0, -1000, 0);
+        ref.current.setMatrixAt(i, tempMatrix);
       }
-    });
+      ref.current.instanceMatrix.needsUpdate = true;
+      if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+    };
+
+    flush(asteroidRef, counts.asteroid);
+    flush(debrisRef, counts.debris);
+    flush(droneRef, counts.drone);
+    flush(mineRef, counts.mine);
+    flush(anomalyRef, counts.anomaly);
+    flush(bombRef, counts.bomb);
+    flush(birdRef, counts.bird);
   });
 
   return (
@@ -473,6 +840,14 @@ function InstancedObstacles({ state }: { state: GameState }) {
       <instancedMesh ref={anomalyRef} args={[undefined, undefined, MAX_OBSTACLES]} frustumCulled={false}>
         <torusGeometry args={[1.2, 0.3, 8, 16]} />
         <primitive object={anomalyMat} attach="material" />
+      </instancedMesh>
+      <instancedMesh ref={bombRef} args={[undefined, undefined, MAX_OBSTACLES]} frustumCulled={false}>
+        <sphereGeometry args={[0.85, 12, 12]} />
+        <primitive object={bombMat} attach="material" />
+      </instancedMesh>
+      <instancedMesh ref={birdRef} args={[undefined, undefined, MAX_OBSTACLES]} frustumCulled={false}>
+        <coneGeometry args={[0.35, 1.1, 5]} />
+        <primitive object={birdMat} attach="material" />
       </instancedMesh>
     </>
   );
@@ -769,6 +1144,7 @@ function BossEnemy({ state }: { state: GameState }) {
 function SceneWithGhost({ engine, ghostPosition }: { engine: GameEngine; ghostPosition: GhostPosition | null }) {
   const state = engine.getState();
   const levelConfig = engine.getCurrentLevelConfig();
+  const isEarth = levelConfig?.theme?.planetPreset === 'earth';
 
   useFrame(() => {
     engine.update();
@@ -780,6 +1156,7 @@ function SceneWithGhost({ engine, ghostPosition }: { engine: GameEngine; ghostPo
   const fogFar = levelConfig?.theme?.fogFar || 150;
   const ambientColor = levelConfig?.theme?.ambientLightColor || '#aaccff';
   const ambientIntensity = levelConfig?.theme?.ambientLightIntensity || 0.35;
+  const starColors = levelConfig?.theme?.starColors || ['#ffffff', '#aaccff'];
 
   return (
     <>
@@ -787,14 +1164,35 @@ function SceneWithGhost({ engine, ghostPosition }: { engine: GameEngine; ghostPo
       <fog attach="fog" args={[fogColor, fogNear, fogFar]} />
       
       <ambientLight intensity={ambientIntensity} color={ambientColor} />
-      <directionalLight position={[15, 25, 15]} intensity={1.2} color={ambientColor} />
-      <pointLight position={[0, 8, -40]} intensity={2.5} color="#ff6633" distance={80} />
-      <pointLight position={[-20, 12, -60]} intensity={2} color="#6633ff" distance={100} />
-      <pointLight position={[20, -8, -50]} intensity={1.5} color="#33ff99" distance={70} />
+      <directionalLight position={[15, 25, 15]} intensity={isEarth ? 0.75 : 1.2} color={isEarth ? '#8899aa' : ambientColor} />
+      {isEarth ? (
+        <>
+          <pointLight position={[0, 2, -140]} intensity={1.4} color="#aa8866" distance={220} />
+          <pointLight position={[-30, 10, -90]} intensity={0.6} color="#445566" distance={120} />
+          <pointLight position={[25, -6, -70]} intensity={0.45} color="#334455" distance={100} />
+        </>
+      ) : (
+        <>
+          <pointLight position={[0, 8, -40]} intensity={2.5} color="#ff6633" distance={80} />
+          <pointLight position={[-20, 12, -60]} intensity={2} color="#6633ff" distance={100} />
+          <pointLight position={[20, -8, -50]} intensity={1.5} color="#33ff99" distance={70} />
+        </>
+      )}
 
-      <Starfield gameSpeed={state.gameSpeed} />
-      <Nebulae />
-      <Planets />
+      <Starfield gameSpeed={state.gameSpeed} starColors={starColors} />
+      {isEarth ? (
+        <>
+          <EarthDystopia />
+          <EarthAtmosphericHaze />
+          <EarthSmogParticles gameSpeed={state.gameSpeed} />
+          <EarthSmogNebulae />
+        </>
+      ) : (
+        <>
+          <Nebulae colors={levelConfig.theme.nebulaColors} />
+          <Planets />
+        </>
+      )}
       <GridTunnel gameSpeed={state.gameSpeed} levelConfig={levelConfig} />
 
       {ghostPosition && <GhostShip position={ghostPosition} />}
@@ -881,6 +1279,7 @@ export default function SpaceGame({
   const engineRef = useRef<GameEngine | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [ghostPosition, setGhostPosition] = useState<GhostPosition | null>(null);
+  const [introHud, setIntroHud] = useState({ fade: 1, line: null as string | null, active: true });
 
   useEffect(() => {
     engineRef.current = new GameEngine();
@@ -917,8 +1316,34 @@ export default function SpaceGame({
   useEffect(() => {
     if (running && engineRef.current) {
       engineRef.current.startGame();
+      const s = engineRef.current.getState();
+      setIntroHud({ fade: s.introFade, line: s.introDialogueLine, active: s.introActive });
     }
   }, [running]);
+
+  useEffect(() => {
+    if (!running || !isReady) return;
+    let id = 0;
+    const tick = () => {
+      const eng = engineRef.current;
+      if (eng) {
+        const s = eng.getState();
+        setIntroHud((prev) => {
+          if (
+            prev.fade === s.introFade &&
+            prev.line === s.introDialogueLine &&
+            prev.active === s.introActive
+          ) {
+            return prev;
+          }
+          return { fade: s.introFade, line: s.introDialogueLine, active: s.introActive };
+        });
+      }
+      id = requestAnimationFrame(tick);
+    };
+    id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, [running, isReady]);
 
   if (!isReady || !engineRef.current) {
     return (
@@ -936,7 +1361,22 @@ export default function SpaceGame({
   }
 
   return (
-    <div style={{ width: '100%', height: '100%' }}>
+    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      {(introHud.active || introHud.fade > 0.02) && (
+        <>
+          <div
+            className="mission-intro-black"
+            style={{ opacity: Math.min(1, introHud.fade) }}
+            aria-hidden
+          />
+          {introHud.line && (
+            <div className="mission-intro-dialogue">
+              <span className="mission-intro-label">SYSTEM</span>
+              <p className="mission-intro-text">{introHud.line}</p>
+            </div>
+          )}
+        </>
+      )}
       <Canvas
         camera={{ position: [0, 6, 16], fov: 70, near: 0.1, far: 300 }}
         dpr={[1, 1.5]}

@@ -91,7 +91,7 @@ export default function App() {
     return saved ? parseInt(saved, 10) : 0;
   });
   const [powerUpNotification, setPowerUpNotification] = useState<{ type: PowerUpType; visible: boolean } | null>(null);
-  const [currentLevel, setCurrentLevel] = useState<LevelInfo>({ id: 1, name: 'ASTEROID BELT', subtitle: 'The Outer Rim', progress: 0 });
+  const [currentLevel, setCurrentLevel] = useState<LevelInfo>({ id: 1, name: 'SECTOR EARTH-01', subtitle: 'Atmospheric Danger Zone', progress: 0 });
   const [levelTransition, setLevelTransition] = useState(false);
   const [bossAlert, setBossAlert] = useState<string | null>(null);
   const [bossDefeated, setBossDefeated] = useState<{ name: string; points: number } | null>(null);
@@ -120,7 +120,7 @@ export default function App() {
     setMultiplier(1);
     setSpeed(6);
     setGameCompleted(false);
-    setCurrentLevel({ id: 1, name: 'ASTEROID BELT', subtitle: 'The Outer Rim', progress: 0 });
+    setCurrentLevel({ id: 1, name: 'SECTOR EARTH-01', subtitle: 'Atmospheric Danger Zone', progress: 0 });
     setScreen('playing');
   }, []);
 

@@ -18,6 +18,8 @@ export interface LevelConfig {
     ambientLightColor: string;
     starColors: string[];
     nebulaColors: string[];
+    /** Earth sector: dystopian planet backdrop + intro styling */
+    planetPreset?: 'earth' | 'space';
   };
   
   // Gameplay settings
@@ -44,30 +46,30 @@ export interface LevelConfig {
 export const LEVELS: LevelConfig[] = [
   {
     id: 1,
-    name: "ASTEROID BELT",
-    subtitle: "The Outer Rim",
-    description: "Navigate through the treacherous asteroid field at the edge of the solar system.",
+    name: "SECTOR EARTH-01",
+    subtitle: "Atmospheric Danger Zone",
+    description: "Polluted skies over a dying homeworld. Survive the debris field.",
     theme: {
-      backgroundColor: '#050510',
-      fogColor: '#050510',
-      fogNear: 50,
-      fogFar: 150,
-      gridColor1: '#331166',
-      gridColor2: '#220044',
-      ambientLightIntensity: 0.35,
-      ambientLightColor: '#aaccff',
-      starColors: ['#ffffff', '#aaccff', '#ffddaa', '#ffaaaa', '#aaffaa'],
-      nebulaColors: ['#6633ff', '#ff3366', '#33ff99', '#ff9933', '#3399ff'],
+      backgroundColor: '#06080c',
+      fogColor: '#1a1e28',
+      fogNear: 35,
+      fogFar: 130,
+      gridColor1: '#3a3d45',
+      gridColor2: '#252830',
+      ambientLightIntensity: 0.22,
+      ambientLightColor: '#8899aa',
+      starColors: ['#8899aa', '#aab0b8', '#ffffff', '#778899', '#9aa5b0'],
+      nebulaColors: ['#2a3038', '#3a3540', '#252830', '#1a1e24', '#354050'],
+      planetPreset: 'earth',
     },
     baseSpeed: 6,
-    speedIncreaseRate: 0.001,
+    speedIncreaseRate: 0.00085,
     maxSpeed: 12,
-    spawnRate: 40,
+    spawnRate: 46,
     obstacleTypes: [
-      { type: 'asteroid', weight: 0.5 },
-      { type: 'debris', weight: 0.3 },
-      { type: 'drone', weight: 0.15 },
-      { type: 'mine', weight: 0.05 },
+      { type: 'asteroid', weight: 0.38 },
+      { type: 'bomb', weight: 0.28 },
+      { type: 'bird', weight: 0.34 },
     ],
     powerUpFrequency: 500,
     targetDistance: 500,

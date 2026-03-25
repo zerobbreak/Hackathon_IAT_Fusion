@@ -43,7 +43,7 @@ export interface Spacecraft extends GameEntity {
   slowMotionTimer: number;
 }
 
-export type ObstacleType = 'asteroid' | 'debris' | 'drone' | 'anomaly' | 'mine';
+export type ObstacleType = 'asteroid' | 'debris' | 'drone' | 'anomaly' | 'mine' | 'bomb' | 'bird';
 
 export interface Obstacle extends GameEntity {
   type: ObstacleType;
@@ -53,6 +53,8 @@ export interface Obstacle extends GameEntity {
   hitFlash: number;
   shootTimer?: number;
   behavior?: 'static' | 'chase' | 'patrol' | 'shoot';
+  /** Per-type motion state (e.g. bird jitter phase) */
+  motionSeed?: number;
 }
 
 export type PowerUpType = 
@@ -174,6 +176,13 @@ export interface GameState {
   levelTransitionTimer: number;
   bossActive: boolean;
   boss: Boss | null;
+
+  /** Level 1 Earth intro: fade 1 = full black, dialogue line for HUD */
+  introActive: boolean;
+  introFade: number;
+  introDialogueLine: string | null;
+  /** 0 = low over Earth surface, 1 = escaped to near-space (camera + planet use this) */
+  introLaunchProgress: number;
   
   activeEffects: {
     slowMotion: boolean;
